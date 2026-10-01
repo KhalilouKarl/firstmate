@@ -1152,6 +1152,403 @@ EOF
   pass "home-summary excludes kind=secondmate from unowned_current and terminal_in_flight"
 }
 
+# --- Backlogs kept by a non-markdown tasks-axi backend ----------------------------------
+# The structured snapshot must show the configured backend's work, never the empty
+# shadow data/backlog.md beside it, and an adapter that cannot be read is a
+# diagnostic rather than an empty valid inventory. The real installed tasks-axi and
+# br (Beads) are exercised in isolated fixture homes behind a guarded br and
+# refusing endpoint stubs; captured real output and edited copies of it cover the
+# shapes a real adapter cannot be made to emit on demand.
+
+ADAPTER_CAPTURES="$ROOT/tests/captures/tasks-axi-0.2.5"
+
+real_adapter_available() {  # prints the explicit not-run line when tasks-axi or br is absent
+  if command -v tasks-axi >/dev/null 2>&1 && command -v br >/dev/null 2>&1; then
+    return 0
+  fi
+  printf 'skip: real tasks-axi and br (Beads) are not installed; adapter checks not run\n'
+  return 1
+}
+
+adapter_guard() {  # <name> - a fixture directory with a guarded br and refusing endpoint stubs
+  local guard=$TMP_ROOT/$1 tool real_br
+  mkdir -p "$guard/guard-bin"
+  real_br=$(command -v br 2>/dev/null || printf '%s' /nonexistent/br)
+  cat > "$guard/guard-bin/br" <<SH
+#!/usr/bin/env bash
+# Guarded: only inside this test's temporary root and never with an explicit database path.
+case "\$PWD/" in "$TMP_ROOT"/*) ;; *) echo "guarded br: refusing cwd \$PWD" >&2; exit 90 ;; esac
+for arg in "\$@"; do case "\$arg" in --db|--db=*) echo "guarded br: refusing --db" >&2; exit 91 ;; esac; done
+exec "$real_br" "\$@"
+SH
+  for tool in gh gh-axi curl ssh; do
+    cat > "$guard/guard-bin/$tool" <<SH
+#!/usr/bin/env bash
+echo "\$0 \$*" >> "$guard/endpoint-calls"
+echo "fixture refuses endpoint tool $tool" >&2
+exit 91
+SH
+  done
+  chmod +x "$guard/guard-bin"/*
+  make_fakebin "$guard" > /dev/null
+  printf '%s\n' "$guard"
+}
+
+adapter_run() {  # <home> <guard> <command...> - one command against one fixture home only
+  local home=$1 guard=$2
+  shift 2
+  PATH="$guard/guard-bin:$guard/fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+    FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" FM_PROJECTS_OVERRIDE="$home/projects" \
+    FM_SNAPSHOT_NOW=2026-10-02T00:00:00Z "$@"
+}
+
+adapter_axi() {  # <home> <guard> <tasks-axi arguments...>
+  local home=$1 guard=$2
+  shift 2
+  (cd "$home" && adapter_run "$home" "$guard" tasks-axi "$@" > /dev/null) \
+    || fail "fixture tasks-axi $* failed in $home"
+}
+
+adapter_home() {  # <name> <guard> beads|markdown|shim [br-binary] - a fixture home with its own addressing root
+  local home guard=$2 kind=$3 binary=${4:-$2/guard-bin/br}
+  home=$(make_home "$1")
+  case "$kind" in
+    beads)
+      mkdir -p "$home/backend/.beads"
+      printf 'backend="beads"\n[beads]\npath="%s"\nbinary="%s"\nactor="fixture"\n' "$home/backend" "$binary" > "$home/.tasks.toml"
+      (cd "$home/backend" && PATH="$guard/guard-bin:$PATH" br init --prefix fx --json > /dev/null 2>&1) \
+        || fail "br init failed for $home"
+      ;;
+    markdown)
+      printf 'backend="markdown"\n[markdown]\npath="data/backlog.md"\n' > "$home/.tasks.toml"
+      ;;
+    shim)
+      printf 'backend="beads"\n[beads]\npath="%s"\nbinary="br"\nactor="fixture"\n' "$home/backend" > "$home/.tasks.toml"
+      ;;
+  esac
+  printf '%s\n' "$home"
+}
+
+adapter_populate() {  # <home> <guard> - the same logical rows whichever backend keeps them
+  local home=$1 guard=$2 reason
+  reason="Fixture decision pending, with a comma and a long reason $(printf 'abcdefghij%.0s' $(seq 1 32))"
+  mkdir -p "$home/data/done-report"
+  printf '# Report\n' > "$home/data/done-report/report.md"
+  adapter_axi "$home" "$guard" add in-flight-work "Fixture underway" --kind ship --repo fixture --start
+  adapter_axi "$home" "$guard" add queued-work 'Fixture queued, with comma and "quote" and unicode äö' --kind ship --repo fixture \
+    --blocked-by in-flight-work --pr https://github.com/o/r/pull/339
+  adapter_axi "$home" "$guard" add held-choice "Fixture captain decision" --kind captain --repo fixture
+  adapter_axi "$home" "$guard" hold held-choice --reason "$reason" --kind captain
+  adapter_axi "$home" "$guard" add dated-hold "Fixture deferred decision" --kind captain --repo fixture
+  adapter_axi "$home" "$guard" hold dated-hold --reason "Deferred to later" --kind captain --until 2099-01-01
+  adapter_axi "$home" "$guard" add done-work "Fixture landed" --kind ship --repo fixture
+  adapter_axi "$home" "$guard" "done" done-work --pr https://github.com/o/r/pull/338 --no-prune
+  adapter_axi "$home" "$guard" add done-report "Fixture scout" --kind scout --repo fixture
+  adapter_axi "$home" "$guard" "done" done-report --report data/done-report/report.md --no-prune
+  adapter_axi "$home" "$guard" add done-local "Fixture local landing local main" --kind ship --repo fixture
+  adapter_axi "$home" "$guard" "done" done-local --no-prune
+  adapter_axi "$home" "$guard" add resolved-blocker "Fixture blocker" --kind ship --repo fixture
+  adapter_axi "$home" "$guard" add after-blocker "Fixture waits on a finished blocker" --kind ship --repo fixture --blocked-by resolved-blocker
+  adapter_axi "$home" "$guard" "done" resolved-blocker --no-prune
+}
+
+adapter_snapshot() {  # <home> <guard>
+  adapter_run "$1" "$2" "$SNAPSHOT" --json
+}
+
+test_adapter_backlog_reaches_snapshot_view_and_bearings() {
+  real_adapter_available || return 0
+  local guard beads markdown shadow_data snap md_snap view bearings listed total pad n
+  guard=$(adapter_guard adapter-real-guard)
+  beads=$(adapter_home adapter-beads "$guard" beads)
+  markdown=$(adapter_home adapter-markdown "$guard" markdown)
+  adapter_populate "$beads" "$guard"
+  adapter_populate "$markdown" "$guard"
+  adapter_axi "$beads" "$guard" add long-title "Long title $(printf 'x%.0s' $(seq 1 200))" --kind ship --repo fixture
+  # More rows than any small page, plus a stale Markdown shadow that must not mask the adapter.
+  for n in $(seq 1 24); do
+    adapter_axi "$beads" "$guard" add "bulk-$(printf '%02d' "$n")" "Bulk row $n" --kind ship --repo fixture
+  done
+  printf '## Queued\n- [ ] shadow-only - Stale shadow row (repo: fixture) (kind: ship)\n' > "$beads/data/backlog.md"
+
+  snap=$(adapter_snapshot "$beads" "$guard") || fail "adapter-backed snapshot failed"
+  md_snap=$(adapter_snapshot "$markdown" "$guard") || fail "markdown control snapshot failed"
+  listed=$(cd "$beads" && adapter_run "$beads" "$guard" tasks-axi list --fields links | sed -n 's/^count: \([0-9][0-9]*\)$/\1/p')
+  [ -n "$listed" ] && [ "$listed" -ge 30 ] || fail "fixture should hold more than a small page of rows, got '$listed'"
+  total=$(printf '%s' "$snap" | jq '.backlog.records | length')
+  [ "$total" = "$listed" ] || fail "snapshot has $total records but tasks-axi lists $listed"
+  printf '%s' "$snap" | jq -e '
+    .backlog.source == "tasks-axi" and .backlog.present == true and .backlog.error == null
+    and ([.backlog.records[].id] | index("shadow-only") | not)
+    and (.main_inventory.backlog_error == null)
+  ' > /dev/null || fail "adapter backlog was masked by the stale shadow file or flagged unavailable"
+  printf '%s' "$snap" | jq -e --arg reason "Fixture decision pending, with a comma and a long reason $(printf 'abcdefghij%.0s' $(seq 1 32))" '
+    def rec($id): .backlog.records[] | select(.id == $id);
+    (rec("in-flight-work") | .state == "in_flight" and .structured == true and .repo == "fixture" and .kind == "ship")
+    and (rec("queued-work") | .state == "queued" and .blocked_by_ids == ["in-flight-work"]
+         and .unresolved_blocker_ids == ["in-flight-work"]
+         and .pr_url == "https://github.com/o/r/pull/339" and .links == ["https://github.com/o/r/pull/339"]
+         and (.title | startswith("Fixture queued, with comma and \"quote\" and unicode äö")))
+    and (rec("held-choice") | .hold_kind == "captain" and .hold_reason == $reason and .hold_bucket == "live"
+         and .captain_actionable == true)
+    and (rec("dated-hold") | .hold_bucket == "dated" and .hold_until == "2099-01-01" and .captain_actionable == false)
+    and (rec("done-work") | .state == "done" and .completion.verb == "merged" and .pr_url == "https://github.com/o/r/pull/338")
+    and (rec("done-report") | .state == "done" and .kind == "scout" and .completion.verb == "reported"
+         and .report_path == "data/done-report/report.md")
+    and (rec("done-local") | .completion.verb == "done" and .local_note == "local main")
+    and (rec("after-blocker") | .blocked_by_ids == ["resolved-blocker"] and .unresolved_blocker_ids == [])
+  ' > /dev/null || fail "adapter rows did not keep their states, holds, dependencies, links or long values"
+  printf '%s' "$snap" | jq -e '
+    .backlog.records[] | select(.id == "long-title")
+    | .title_truncated == true and (.title | endswith("…")) and ((.title | contains("--full")) | not)
+      and ((.title | contains("tasks-axi")) | not) and (.title_raw | contains("(truncated, "))
+      and .title_chars_total == 211
+  ' > /dev/null || fail "a truncated title must render with an ellipsis and keep the raw cell and its length"
+  # The same logical rows classify identically under either backend.
+  jq -n --argjson a "$snap" --argjson b "$md_snap" '
+    def pick($s; $id): $s.backlog.records[] | select(.id == $id)
+      | {state,current_role,hold_bucket,captain_actionable,unresolved_blocker_ids,kind,repo};
+    ["in-flight-work","queued-work","held-choice","dated-hold","done-work","after-blocker"]
+    | all(.[]; . as $id | pick($a; $id) == pick($b; $id))
+  ' | grep -qx true || fail "markdown control and adapter-backed rows should classify identically"
+  printf '%s' "$snap" | jq -e '
+    .main_inventory.valid == false and .main_inventory.orphan_in_flight == ["in-flight-work"]
+    and .main_inventory.reason == "in-flight backlog item has no child metadata"
+  ' > /dev/null || fail "an adapter in-flight row without child metadata must disclose the orphan"
+
+  view=$(adapter_run "$beads" "$guard" "$VIEW") || fail "fleet view failed on the adapter-backed home"
+  assert_contains "$view" "| queued-work | Fixture queued, with comma and \"quote\" and unicode äö… | fixture | ship | in-flight-work | https://github.com/o/r/pull/339 |" \
+    "view should render the adapter queued row with its blocker and artifact"
+  assert_contains "$view" "| done-work | Fixture landed | fixture | ship | - | https://github.com/o/r/pull/338 |" \
+    "view should render the adapter done row"
+  assert_not_contains "$view" "No queued backlog records found." "view must not call a populated adapter backlog empty"
+  assert_not_contains "$view" "shadow-only" "view must not render the stale shadow row"
+  assert_not_contains "$view" "tasks-axi show" "view must not print backend help text inside a title"
+
+  bearings=$(adapter_run "$beads" "$guard" "$ROOT/bin/fm-bearings-snapshot.sh" --json --all-queued --all-landed) \
+    || fail "bearings failed on the adapter-backed home"
+  printf '%s' "$bearings" | jq -e '
+    ([.decisions_open[].id] | index("held-choice") != null)
+    and ([.decisions_open[].id] | index("dated-hold") == null)
+    and ([.gates[].id] | index("dated-hold") != null)
+    and ([.gates[].id] | index("queued-work") != null)
+    and ([.gates[].id] | index("(main-inventory)") != null)
+    and ([.landed[].id] | index("done-work") != null)
+    and ([.omitted[].surface] | map(select(startswith("main in-flight backlog item(s) have no child metadata"))) | length == 1)
+  ' > /dev/null || fail "bearings should surface the adapter held call, dated gate, landed row and orphan disclosure"
+  [ ! -e "$guard/endpoint-calls" ] || fail "fixture homes must never reach an endpoint tool: $(cat "$guard/endpoint-calls")"
+  pass "a real tasks-axi/Beads backlog reaches the snapshot, view and bearings, ignoring a stale shadow file"
+}
+
+test_adapter_unavailable_unreadable_and_empty_backlogs() {
+  real_adapter_available || return 0
+  local guard missing unreadable empty snap view bearings
+  guard=$(adapter_guard adapter-failure-guard)
+  missing=$(adapter_home adapter-missing-binary "$guard" beads /nonexistent/fleet-test-br)
+  unreadable=$(adapter_home adapter-unreadable "$guard" markdown)
+  rm -f "$unreadable/.tasks.toml"
+  mkdir "$unreadable/.tasks.toml"
+  empty=$(adapter_home adapter-empty "$guard" beads)
+  printf '## Queued\n- [ ] shadow-only - Stale shadow row (repo: fixture) (kind: ship)\n' > "$missing/data/backlog.md"
+
+  snap=$(adapter_snapshot "$missing" "$guard") || fail "snapshot must report an unavailable adapter, not fail"
+  printf '%s' "$snap" | jq -e '
+    .backlog.present == false and .backlog.records == [] and (.backlog.error | contains("is not on PATH"))
+    and .main_inventory.valid == false and (.main_inventory.reason | startswith("Backlog unavailable: "))
+  ' > /dev/null || fail "an unavailable adapter must be a diagnostic, not an empty valid backlog"
+  view=$(adapter_run "$missing" "$guard" "$VIEW") || fail "fleet view must render an unavailable adapter"
+  assert_contains "$view" "Backlog unavailable: " "view should say the backlog is unavailable"
+  assert_not_contains "$view" "No queued backlog records found." "an unavailable backlog is not an empty queue"
+  assert_not_contains "$view" "shadow-only" "the shadow file must not stand in for an unavailable adapter"
+  bearings=$(adapter_run "$missing" "$guard" "$ROOT/bin/fm-bearings-snapshot.sh" --json) || fail "bearings failed on an unavailable adapter"
+  printf '%s' "$bearings" | jq -e '
+    .gates[] | select(.id == "(main-inventory)") | (.title | startswith("Backlog unavailable"))
+  ' > /dev/null || fail "bearings should gate on the unavailable backlog through the main inventory"
+
+  snap=$(adapter_snapshot "$unreadable" "$guard") || fail "snapshot must report an unreadable configuration, not fail"
+  printf '%s' "$snap" | jq -e '
+    .backlog.present == false and (.backlog.error | contains("configuration cannot be read"))
+    and .main_inventory.valid == false and (.main_inventory.reason | startswith("Backlog unavailable: "))
+  ' > /dev/null || fail "an unreadable tasks-axi configuration must be a diagnostic"
+
+  snap=$(adapter_snapshot "$empty" "$guard") || fail "snapshot failed on an empty initialized adapter"
+  printf '%s' "$snap" | jq -e '
+    .backlog.present == true and .backlog.source == "tasks-axi" and .backlog.error == null and .backlog.records == []
+    and .main_inventory.valid == true
+  ' > /dev/null || fail "a genuinely empty initialized adapter stays a valid empty inventory"
+  view=$(adapter_run "$empty" "$guard" "$VIEW")
+  assert_contains "$view" "No queued backlog records found." "an empty initialized adapter is an honest empty queue"
+  pass "unavailable, unreadable and empty adapter backlogs are told apart"
+}
+
+test_adapter_link_values_parse_faithfully_with_the_adapter_grammar() {
+  real_adapter_available || return 0
+  local guard home snap
+  guard=$(adapter_guard adapter-links-guard)
+  home=$(adapter_home adapter-links "$guard" beads)
+  adapter_axi "$home" "$guard" add pr-comma "PR with comma path" --kind ship --repo fixture --pr 'https://github.com/o/a,b/pull/7'
+  adapter_axi "$home" "$guard" add report-comma "Report with commas" --kind scout --repo fixture --report 'data/a,report:b/report.md'
+  adapter_axi "$home" "$guard" add pair "PR and report" --kind ship --repo fixture --pr https://github.com/o/r/pull/4 --report data/pair/report.md
+  adapter_axi "$home" "$guard" add two-prs "Two PRs" --kind ship --repo fixture
+  adapter_axi "$home" "$guard" update two-prs --pr https://github.com/o/r/pull/1
+  adapter_axi "$home" "$guard" update two-prs --pr https://github.com/o/r/pull/2
+  adapter_axi "$home" "$guard" add two-reports "Two reports" --kind scout --repo fixture --report data/two-reports/report.md
+  adapter_axi "$home" "$guard" update two-reports --report data/other/report.md
+  adapter_axi "$home" "$guard" add quote-report "Report with a quote" --kind scout --repo fixture --report 'data/we"ird/report.md'
+  adapter_axi "$home" "$guard" add generic-urls "See https://example.com/a,b and https://example.org/c" --kind ship --repo fixture
+  snap=$(adapter_snapshot "$home" "$guard") || fail "adapter-backed snapshot failed"
+  printf '%s' "$snap" | jq -e '
+    def rec($id): .backlog.records[] | select(.id == $id);
+    (rec("pr-comma") | .links_ambiguous == false and .pr_url == "https://github.com/o/a,b/pull/7")
+    and (rec("report-comma") | .links_ambiguous == false and .report_path == "data/a,report:b/report.md")
+    and (rec("pair") | .pr_url == "https://github.com/o/r/pull/4" and .report_path == "data/pair/report.md")
+    and (rec("two-prs") | .links == ["https://github.com/o/r/pull/1", "https://github.com/o/r/pull/2"])
+    and (rec("two-reports") | .report_path == "data/two-reports/report.md" and .links_ambiguous == false)
+    and (rec("quote-report") | .report_path == "data/we\"ird/report.md")
+    and (rec("generic-urls") | .links_ambiguous == true and .pr_url == null and .report_path == null and .links == []
+         and (.links_raw | contains("doc:https://example.com/a,b,doc:https://example.org/c")))
+    and .main_inventory.valid == false
+    and (.main_inventory.reason | contains("links ambiguous or unparseable") and contains("generic-urls"))
+    and .main_inventory.links_ambiguous_ids == ["generic-urls"]
+  ' > /dev/null || fail "link values must parse with the adapter grammar and an unprovable cell must withhold its artifacts"
+  pass "real adapter link cells parse faithfully, and an unprovable doc-link cell is withheld with a disclosure"
+}
+
+# A tasks-axi stand-in that replays captured real output, for the shapes a real adapter
+# cannot be made to emit on demand. It logs every call so reads can be counted.
+adapter_shim() {  # <guard>
+  local guard=$1
+  cat > "$guard/guard-bin/tasks-axi" <<SH
+#!/usr/bin/env bash
+echo "\$*" >> "$guard/shim-calls"
+if [ "\${1:-}" != list ]; then echo "shim: only list is replayed" >&2; exit 90; fi
+mode=\$(cat "$guard/shim-mode")
+case "\$mode" in
+  sleep) sleep 5 ;;
+esac
+case "\$*" in
+  *--limit*) cat "$guard/shim-limited" 2>/dev/null || cat "$guard/shim-out" ;;
+  *) cat "$guard/shim-out" ;;
+esac
+case "\$mode" in
+  stderr-only) echo "shim: backend configuration cannot be read" >&2; exit 2 ;;
+esac
+exit "\$(cat "$guard/shim-exit" 2>/dev/null || echo 0)"
+SH
+  chmod +x "$guard/guard-bin/tasks-axi"
+  : > "$guard/shim-calls"
+}
+
+shim_set() {  # <guard> <mode> <stdout-file|-> [exit-status]
+  printf '%s\n' "$2" > "$1/shim-mode"
+  if [ "$3" = - ]; then : > "$1/shim-out"; else cp "$3" "$1/shim-out"; fi
+  printf '%s\n' "${4:-0}" > "$1/shim-exit"
+  rm -f "$1/shim-limited"
+  : > "$1/shim-calls"
+}
+
+test_adapter_reads_are_bounded_complete_and_strictly_decoded() {
+  local guard home snap variant out calls start end
+  guard=$(adapter_guard adapter-shim-guard)
+  adapter_shim "$guard"
+  home=$(adapter_home adapter-shim "$guard" shim)
+
+  shim_set "$guard" ok "$ADAPTER_CAPTURES/list-all-states.toon"
+  snap=$(adapter_snapshot "$home" "$guard") || fail "snapshot failed on captured adapter output"
+  printf '%s' "$snap" | jq -e '
+    (.backlog.records | length) == 7 and .backlog.present == true
+    and (.backlog.records[] | select(.id == "odd-links") | .pr_url == "https://github.com/o/a,b/pull/7"
+         and .report_path == "data/a,report:b/report.md")
+    and (.backlog.records[] | select(.id == "two-prs") | .links | length == 2)
+    and (.backlog.records[] | select(.id == "long-title") | .title_truncated and (.title | endswith("…")))
+  ' > /dev/null || fail "captured real list output should decode into records"
+  [ "$(wc -l < "$guard/shim-calls" | tr -d ' ')" = 1 ] || fail "a complete read is exactly one list call"
+  grep -q ' show ' "$guard/shim-calls" && fail "the reader must not issue per-row show reads"
+
+  # An explicit count marker is incomplete: one bounded re-read with the reported total, never a loop.
+  # The first call (no --limit) answers with the limited capture, the re-read (--limit 7) with the full one.
+  shim_set "$guard" ok "$ADAPTER_CAPTURES/list-limited.toon"
+  cp "$ADAPTER_CAPTURES/list-all-states.toon" "$guard/shim-limited"
+  snap=$(adapter_snapshot "$home" "$guard") || fail "snapshot failed on an incomplete first read"
+  printf '%s' "$snap" | jq -e '.backlog.present == true and (.backlog.records | length) == 7' > /dev/null \
+    || fail "an incomplete first read should be completed by one --limit re-read"
+  [ "$(wc -l < "$guard/shim-calls" | tr -d ' ')" = 2 ] || fail "incomplete read should cost exactly two list calls: $(cat "$guard/shim-calls")"
+  sed -n '2p' "$guard/shim-calls" | grep -q -- '--limit 7' || fail "the re-read must ask for the reported total"
+
+  rm -f "$guard/shim-limited"
+  shim_set "$guard" ok "$ADAPTER_CAPTURES/list-limited.toon"
+  snap=$(adapter_snapshot "$home" "$guard") || fail "snapshot failed on persistently incomplete output"
+  printf '%s' "$snap" | jq -e '
+    .backlog.present == false and .backlog.records == [] and (.backlog.error | contains("incomplete adapter output: 3 of 7 rows"))
+    and .main_inventory.valid == false and (.main_inventory.reason | startswith("Backlog unavailable: "))
+  ' > /dev/null || fail "a persistently incomplete read must be a diagnostic, not a partial inventory"
+  [ "$(wc -l < "$guard/shim-calls" | tr -d ' ')" = 2 ] || fail "incomplete reads must stop after one re-read"
+
+  # Malformed envelopes are unavailable, never an empty or partial backlog.
+  for variant in count header columns short extra quote state duplicate id help; do
+    out=$TMP_ROOT/shim-malformed-$variant.toon
+    case "$variant" in
+      count) sed '1s/^count: 7$/count: 6/' "$ADAPTER_CAPTURES/list-all-states.toon" > "$out" ;;
+      header) sed 's/^tasks\[7\]/tasks[8]/' "$ADAPTER_CAPTURES/list-all-states.toon" > "$out" ;;
+      columns) sed '2s/,priority}/,priority,extra}/' "$ADAPTER_CAPTURES/list-all-states.toon" > "$out" ;;
+      short) sed '9d' "$ADAPTER_CAPTURES/list-all-states.toon" > "$out" ;;
+      extra) { sed -n '1,9p' "$ADAPTER_CAPTURES/list-all-states.toon"; printf '  stray,queued,ship,fixture,Stray\n'; sed -n '10,$p' "$ADAPTER_CAPTURES/list-all-states.toon"; } > "$out" ;;
+      quote) sed '3s/"Odd links/"Odd "links/' "$ADAPTER_CAPTURES/list-all-states.toon" > "$out" ;;
+      state) sed '9s/,in_flight,/,flying,/' "$ADAPTER_CAPTURES/list-all-states.toon" > "$out" ;;
+      duplicate) sed '9s/^  in-flight-work,/  odd-links,/' "$ADAPTER_CAPTURES/list-all-states.toon" > "$out" ;;
+      id) sed '9s/^  in-flight-work,/  in flight work,/' "$ADAPTER_CAPTURES/list-all-states.toon" > "$out" ;;
+      help) sed '/^help\[/,$d' "$ADAPTER_CAPTURES/list-all-states.toon" > "$out" ;;
+    esac
+    shim_set "$guard" ok "$out"
+    snap=$(adapter_snapshot "$home" "$guard") || fail "snapshot must survive malformed output ($variant)"
+    printf '%s' "$snap" | jq -e '
+      .backlog.present == false and .backlog.records == [] and (.backlog.error | startswith("malformed adapter output"))
+      and .main_inventory.valid == false
+    ' > /dev/null || fail "malformed adapter output ($variant) must be a diagnostic, got: $(printf '%s' "$snap" | jq -c '.backlog.error')"
+  done
+
+  # A link cell the grammar cannot consume entirely never fabricates an artifact.
+  sed '3s#"pr:https://github.com/o/a,b/pull/7,report:data/a,report:b/report.md"#"pr:https://h/pull/1,pr:https://h/pull/2/pull/3"#' \
+    "$ADAPTER_CAPTURES/list-all-states.toon" > "$TMP_ROOT/shim-ambiguous.toon"
+  shim_set "$guard" ok "$TMP_ROOT/shim-ambiguous.toon"
+  snap=$(adapter_snapshot "$home" "$guard") || fail "snapshot failed on an unparseable link cell"
+  printf '%s' "$snap" | jq -e '
+    (.backlog.records[] | select(.id == "odd-links")
+       | .links_ambiguous == true and .links_raw == "pr:https://h/pull/1,pr:https://h/pull/2/pull/3"
+         and .pr_url == null and .report_path == null and .links == [] and .state == "queued" and .kind == "ship")
+    and (.backlog.records[] | select(.id == "done-work") | .pr_url == "https://github.com/o/r/pull/338")
+    and .main_inventory.valid == false and .main_inventory.links_ambiguous_ids == ["odd-links"]
+  ' > /dev/null || fail "an unconsumable link cell must keep raw evidence and withhold parsed artifacts"
+  view=$(adapter_run "$home" "$guard" "$VIEW")
+  assert_contains "$view" "links ambiguous: pr:https://h/pull/1,pr:https://h/pull/2/pull/3" "view should show the raw ambiguous cell"
+
+  # Failure shapes: TOON diagnostic on stdout, text on stderr only, and a read past its bound.
+  shim_set "$guard" ok "$ADAPTER_CAPTURES/error-unavailable.toon" 1
+  snap=$(adapter_snapshot "$home" "$guard")
+  printf '%s' "$snap" | jq -e '.backlog.present == false and (.backlog.error | contains("is not on PATH (UNSUPPORTED)"))' > /dev/null \
+    || fail "a TOON error on stdout should become the diagnostic"
+  shim_set "$guard" stderr-only - 2
+  snap=$(adapter_snapshot "$home" "$guard")
+  printf '%s' "$snap" | jq -e '.backlog.present == false and (.backlog.error | length > 0)' > /dev/null \
+    || fail "an empty failing read should still be a diagnostic"
+  shim_set "$guard" sleep "$ADAPTER_CAPTURES/list-all-states.toon"
+  start=$(date +%s)
+  snap=$(FM_BACKLOG_ROWS_TIMEOUT_SECS=1 adapter_snapshot "$home" "$guard")
+  end=$(date +%s)
+  printf '%s' "$snap" | jq -e '.backlog.present == false and (.backlog.error | contains("exceeded its 1s backlog read bound"))' > /dev/null \
+    || fail "a wedged adapter read must be bounded and reported"
+  [ $((end - start)) -lt 5 ] || fail "the read bound must cut a wedged adapter short"
+
+  # A markdown home never calls tasks-axi at all.
+  home=$(make_home adapter-shim-markdown)
+  printf '## Queued\n- [ ] only-row - Only row (repo: fixture) (kind: ship)\n' > "$home/data/backlog.md"
+  : > "$guard/shim-calls"
+  snap=$(adapter_snapshot "$home" "$guard") || fail "markdown home snapshot failed"
+  printf '%s' "$snap" | jq -e '.backlog.records | length == 1' > /dev/null || fail "markdown home should keep its file"
+  [ ! -s "$guard/shim-calls" ] || fail "a markdown backlog must not call tasks-axi: $(cat "$guard/shim-calls")"
+  pass "adapter reads are bounded, complete or diagnosed, strictly decoded, and markdown homes are untouched"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_home_summary_excludes_secondmate_from_child_inventory
@@ -1170,3 +1567,7 @@ test_scout_reports_include_teardown_reports
 test_backlog_tasks_axi_forms_and_overrides
 test_view_renders_snapshot
 test_view_renders_dead_secondmate_agent_status
+test_adapter_reads_are_bounded_complete_and_strictly_decoded
+test_adapter_backlog_reaches_snapshot_view_and_bearings
+test_adapter_unavailable_unreadable_and_empty_backlogs
+test_adapter_link_values_parse_faithfully_with_the_adapter_grammar
