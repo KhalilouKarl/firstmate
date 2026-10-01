@@ -1258,12 +1258,16 @@ adapter_snapshot() {  # <home> <guard>
 
 test_adapter_backlog_reaches_snapshot_view_and_bearings() {
   real_adapter_available || return 0
-  local guard beads markdown shadow_data snap md_snap view bearings listed total pad n
+  local guard beads markdown shadow_data snap md_snap view bearings listed total pad n encoded
   guard=$(adapter_guard adapter-real-guard)
   beads=$(adapter_home adapter-beads "$guard" beads)
   markdown=$(adapter_home adapter-markdown "$guard" markdown)
   adapter_populate "$beads" "$guard"
   adapter_populate "$markdown" "$guard"
+  # A captain hold stores its reason as fm-hold-v1 text (bin/fm-captain-hold.sh); the snapshot decodes it like markdown does.
+  encoded=$(. "$ROOT/bin/fm-hold-reason-lib.sh" && fm_hold_reason_encode $'Pick (A) or (B)\n100% sure?')
+  adapter_axi "$beads" "$guard" add encoded-hold "Fixture encoded decision" --kind captain --repo fixture
+  adapter_axi "$beads" "$guard" hold encoded-hold --reason "$encoded" --kind captain
   adapter_axi "$beads" "$guard" add long-title "Long title $(printf 'x%.0s' $(seq 1 200))" --kind ship --repo fixture
   # More rows than any small page, plus a stale Markdown shadow that must not mask the adapter.
   for n in $(seq 1 24); do
@@ -1298,6 +1302,9 @@ test_adapter_backlog_reaches_snapshot_view_and_bearings() {
     and (rec("done-local") | .completion.verb == "done" and .local_note == "local main")
     and (rec("after-blocker") | .blocked_by_ids == ["resolved-blocker"] and .unresolved_blocker_ids == [])
   ' > /dev/null || fail "adapter rows did not keep their states, holds, dependencies, links or long values"
+  printf '%s' "$snap" | jq -e '
+    .backlog.records[] | select(.id == "encoded-hold") | .hold_reason == "Pick (A) or (B)\n100% sure?"
+  ' > /dev/null || fail "an fm-hold-v1 hold reason on the adapter backend must be decoded: $(printf '%s' "$snap" | jq -c '.backlog.records[] | select(.id == "encoded-hold") | .hold_reason')"
   printf '%s' "$snap" | jq -e '
     .backlog.records[] | select(.id == "long-title")
     | .title_truncated == true and (.title | endswith("…")) and ((.title | contains("--full")) | not)

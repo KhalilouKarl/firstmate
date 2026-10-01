@@ -469,7 +469,8 @@ BACKLOG_JQ_COMMON='
 # adapter through the shared backlog reader, shaped like the markdown records. Returns 1 when the markdown
 # file is the backlog (the default, config/backlog-backend=manual, or no data directory), so that path
 # stays exactly as it was. An unreadable configuration or an unavailable, malformed or incomplete adapter
-# read is present:false with an error and never an empty valid backlog.
+# read is present:false with an error and never an empty valid backlog. Hold reasons come back from
+# tasks-axi still in their stored fm-hold-v1 form, so they are decoded here exactly as for markdown.
 backlog_adapter_json() {
   local root backend status rows
   fm_backlog_backend_manual "$CONFIG" && return 1
@@ -486,12 +487,13 @@ backlog_adapter_json() {
   else
     rows=$(fm_backlog_rows_json "$DATA") || return 2
   fi
+  set -o pipefail  # runs in backlog_json's subshell
   printf '%s\n' "$rows" | jq -c --arg path "$BACKLOG" --arg backend "$backend" --arg today "$SNAPSHOT_TODAY" \
     --arg now "$SNAPSHOT_NOW" --argjson age_days "$FM_SNAPSHOT_UNDATED_HOLD_AGE_DAYS" "$BACKLOG_JQ_COMMON"'
     {path:$path,present:(.ok == true),source:"tasks-axi",backend:$backend,
      error:(if .ok == true then null else (.error // "backlog read failed") end),
      records:(if .ok == true then [.rows[] | del(._deps,._held,._blocked)] else [] end)}
-    | finish_records' || return 2
+    | finish_records' | fm_hold_reason_decode_stream json || return 2
 }
 
 backlog_json() (  # [<backlog-path>] - defaults to this home's $BACKLOG
