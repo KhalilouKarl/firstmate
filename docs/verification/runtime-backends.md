@@ -875,8 +875,15 @@ The negative control again failed with the `not ok` line above and exit 1, with 
 The committed fix then produced the three `ok` lines above and exit 0.
 The worker launch replayed by the guard was `codex --model 'gpt-6.1-sol' --dangerously-bypass-approvals-and-sandbox --disable hooks -c disable_paste_burst=true ...`.
 
-The guard now also replays the generated secondmate launch, which keeps hooks on and points them at its own fixture home, and steers it as a recorded secondmate.
-That secondmate variant has not yet been recorded live here; the deterministic launch-shape check in `tests/fm-spawn-dispatch-profile.test.sh` is not live evidence.
+The guard's secondmate variant replays the generated secondmate launch, which keeps hooks on, and steers it as a recorded secondmate.
+It runs only with an opt-in dedicated fixture, `FM_SEND_INBOX_LIVE_SECONDMATE_HOME=<dir>`: an operator-made standalone clone under `${TMPDIR:-/tmp}` at the guard checkout's `HEAD` with a byte-identical `.codex/hooks.json`, a clean work tree, and a `.git/fm-live-secondmate-fixture` file naming its own canonical path.
+That clone is the secondmate's own home, the launch's `FM_HOME`, and the window's working directory.
+Its hooks load only if the operator's normal native Codex hook review trusted them at that exact path; an untrusted fixture shows the review modal and fails readiness.
+The guard claims hook loading under that posture, not hook execution, unless execution is observed.
+It writes only `.fm-secondmate-home` and `data/charter.md` in the fixture, and on exit removes them along with any empty `data/` or `state/` it created.
+Without the fixture the variant is reported untested, never passed; a refused fixture fails the run with its reason.
+`bin/fm-spawn.sh` refuses a secondmate home equal to the Firstmate repo, so run the guard from a separate checkout at the same commit.
+That secondmate variant has not yet been recorded live here; the deterministic checks in `tests/fm-spawn-dispatch-profile.test.sh` and `tests/fm-send-inbox-live-secondmate-fixture.test.sh` are not live evidence.
 
 ## Waiting-worker command ceilings
 

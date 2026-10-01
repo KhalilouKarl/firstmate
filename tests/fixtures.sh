@@ -349,13 +349,23 @@ make_seeded_secondmate_home() {
   git -C "$home" init -q -b main
 }
 
-# fm_test_capture_codex_launch <case-dir> [--secondmate] <extra fm-spawn args...>
+# fm_test_capture_codex_launch <case-dir> [--secondmate[=<home>]] <extra fm-spawn args...>
 # Capture the generated launch through the public spawn interface. The task is
 # codex-live in <case-dir>/home; --secondmate launches it into a seeded
-# <case-dir>/secondmate-home instead of a project worktree.
+# <case-dir>/secondmate-home instead of a project worktree. --secondmate=<home>
+# launches into that already-marked home instead, skipping the inheritance and
+# fast-forward steps so the spawn writes nothing there beyond its state/ dir.
 fm_test_capture_codex_launch() {
-  local case_dir=$1 home proj wt fakebin launchlog target
+  local case_dir=$1 home proj wt fakebin launchlog target skip=0
   shift
+  case "${1:-}" in
+    --secondmate=*)
+      target=${1#--secondmate=}
+      shift
+      set -- --secondmate "$@"
+      skip=1
+      ;;
+  esac
   home="$case_dir/home"
   proj="$case_dir/project"
   wt="$case_dir/wt"
@@ -364,16 +374,122 @@ fm_test_capture_codex_launch() {
   fm_test_spawn_home "$home" codex
   fm_test_spawn_brief "$home" codex-live
   fm_git_worktree "$proj" "$wt" codex-live
-  target=$proj
-  if [ "${1:-}" = --secondmate ]; then
-    target="$case_dir/secondmate-home"
-    make_seeded_secondmate_home "$target" codex-live
+  if [ "$skip" -eq 0 ]; then
+    target=$proj
+    if [ "${1:-}" = --secondmate ]; then
+      target="$case_dir/secondmate-home"
+      make_seeded_secondmate_home "$target" codex-live
+    fi
   fi
   : > "$launchlog"
-  FM_FAKE_LAUNCH_LOG="$launchlog" \
+  FM_SKIP_SECONDMATE_INHERIT=$skip FM_SKIP_SECONDMATE_SYNC=$skip FM_FAKE_LAUNCH_LOG="$launchlog" \
     fm_test_run_spawn "$home" "$wt" "$fakebin" codex-live "$target" "$@" >/dev/null 2>&1 ||
     fail "fm-spawn could not build a codex launch"
   cat "$launchlog"
+}
+
+# --- dedicated live secondmate fixture -------------------------------------
+#
+# The live doorbell guard's secondmate variant runs only in an operator-supplied
+# standalone clone (FM_SEND_INBOX_LIVE_SECONDMATE_HOME). The guard never creates
+# the consent sentinel and owns only the literal paths prepare writes.
+
+# fm_live_sm_fixture_check <dir> <root>
+# Echoes the canonical fixture; with no <dir>, prints the untested report and
+# returns 2; otherwise prints the refusal reason and returns 1.
+fm_live_sm_fixture_check() {
+  local dir=$1 root=$2 abs tmp other sentinel p
+  [ -n "$dir" ] || { printf 'untested: no dedicated fixture supplied\n'; return 2; }
+  case "$dir" in
+    /*) ;;
+    *) printf 'not an absolute path: %s\n' "$dir"; return 1 ;;
+  esac
+  [ ! -L "$dir" ] || { printf 'is a symlink: %s\n' "$dir"; return 1; }
+  [ -d "$dir" ] || { printf 'not an existing directory: %s\n' "$dir"; return 1; }
+  abs=$(cd "$dir" && pwd -P)
+  [ "$abs" = "$dir" ] || { printf 'not canonical (resolves to %s): %s\n' "$abs" "$dir"; return 1; }
+  tmp=$(cd "${TMPDIR:-/tmp}" && pwd -P)
+  case "$abs" in
+    "$tmp"/*) ;;
+    *) printf 'not under %s: %s\n' "$tmp" "$abs"; return 1 ;;
+  esac
+  if [ -L "$abs/.git" ] || [ ! -d "$abs/.git" ] ||
+    [ "$(git -C "$abs" rev-parse --show-toplevel 2>/dev/null)" != "$abs" ] ||
+    [ "$(git -C "$abs" rev-parse --git-common-dir 2>/dev/null)" != .git ]; then
+    printf 'not a standalone clone (linked worktree or not its own git top level): %s\n' "$abs"
+    return 1
+  fi
+  sentinel=$(sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' "$abs/.git/fm-live-secondmate-fixture" 2>/dev/null) || sentinel=''
+  [ "$sentinel" = "$abs" ] || {
+    printf 'no consent sentinel naming this fixture: %s/.git/fm-live-secondmate-fixture\n' "$abs"
+    return 1
+  }
+  root=$(cd "$root" && pwd -P)
+  for other in "${FM_HOME:-}" "$root" "${HOME:-}"; do
+    [ -n "$other" ] && [ -d "$other" ] || continue
+    other=$(cd "$other" && pwd -P)
+    [ "$abs" = "$root" ] && [ "$other" = "$root" ] && continue
+    case "$abs/" in
+      "$other"/*) printf 'equal to or inside %s: %s\n' "$other" "$abs"; return 1 ;;
+    esac
+    case "$other/" in
+      "$abs"/*) printf 'contains %s: %s\n' "$other" "$abs"; return 1 ;;
+    esac
+  done
+  for p in .fm-secondmate-home .fm-secondmate-parent projects; do
+    if [ -e "$abs/$p" ] || [ -L "$abs/$p" ]; then
+      printf 'stale fixture state; remove manually: %s\n' "$abs/$p"
+      return 1
+    fi
+  done
+  for p in state data; do
+    if [ -L "$abs/$p" ] || { [ -e "$abs/$p" ] && [ ! -d "$abs/$p" ]; } ||
+      [ -n "$(ls -A "$abs/$p" 2>/dev/null)" ]; then
+      printf 'stale fixture state; remove manually: %s\n' "$abs/$p"
+      return 1
+    fi
+  done
+  if ! p=$(git -C "$abs" status --porcelain 2>&1) || [ -n "$p" ]; then
+    printf 'work tree is not clean: %s\n' "$abs"
+    return 1
+  fi
+  [ "$(git -C "$abs" rev-parse HEAD 2>/dev/null)" = "$(git -C "$root" rev-parse HEAD 2>/dev/null)" ] ||
+    { printf 'HEAD differs from %s: %s\n' "$root" "$abs"; return 1; }
+  if [ ! -f "$abs/.codex/hooks.json" ] || ! cmp -s "$abs/.codex/hooks.json" "$root/.codex/hooks.json"; then
+    printf '.codex/hooks.json is missing or differs from %s: %s\n' "$root" "$abs"
+    return 1
+  fi
+  printf '%s\n' "$abs"
+}
+
+FM_LIVE_SM_FIXTURE=''
+FM_LIVE_SM_MADE_DATA=0
+FM_LIVE_SM_MADE_STATE=0
+
+# fm_live_sm_fixture_prepare <checked-fixture> <id>
+# Marks the fixture as <id>'s secondmate home. Records which of data/ and
+# state/ (the spawn creates state/) did not exist, so cleanup removes only those.
+fm_live_sm_fixture_prepare() {
+  local abs=$1 id=$2
+  FM_LIVE_SM_FIXTURE=$abs
+  [ -d "$abs/data" ] || FM_LIVE_SM_MADE_DATA=1
+  [ -d "$abs/state" ] || FM_LIVE_SM_MADE_STATE=1
+  mkdir -p "$abs/data" &&
+    printf '%s\n' "$id" > "$abs/.fm-secondmate-home" &&
+    printf 'charter for %s\n' "$id" > "$abs/data/charter.md"
+}
+
+# fm_live_sm_fixture_cleanup
+# Removes exactly what prepare (and the spawn's state/ mkdir) created.
+fm_live_sm_fixture_cleanup() {
+  local abs=$FM_LIVE_SM_FIXTURE
+  [ -n "$abs" ] || return 0
+  rm -f "$abs/.fm-secondmate-home" "$abs/data/charter.md"
+  [ "$FM_LIVE_SM_MADE_DATA" -eq 0 ] || rmdir "$abs/data" 2>/dev/null || true
+  [ "$FM_LIVE_SM_MADE_STATE" -eq 0 ] || rmdir "$abs/state" 2>/dev/null || true
+  FM_LIVE_SM_FIXTURE=''
+  FM_LIVE_SM_MADE_DATA=0
+  FM_LIVE_SM_MADE_STATE=0
 }
 
 # fm_test_codex_global_flags <launch command>

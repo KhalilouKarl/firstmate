@@ -23,17 +23,30 @@
 # than passing vacuously. Restrict with
 # FM_SEND_INBOX_LIVE_HARNESSES="claude codex ..." when needed, and tune the
 # per-harness wait with FM_SEND_INBOX_LIVE_TIMEOUT (seconds, default 240).
-# Codex replays the generated worker flags, then a second time the generated
-# secondmate launch (hooks on, its own fixture home) steered as a recorded
-# secondmate; optionally select its model with FM_SEND_INBOX_LIVE_CODEX_MODEL. Its reader is paused while fm-send queues
+# Codex replays the generated worker flags; optionally select its model with
+# FM_SEND_INBOX_LIVE_CODEX_MODEL. Its reader is paused while fm-send queues
 # the doorbell, then resumed: text and Enter must submit even as one burst,
 # without a recovery re-ring hiding a missed submission.
+#
+# The Codex secondmate variant replays the generated secondmate launch (hooks
+# on) and needs an opt-in dedicated fixture, FM_SEND_INBOX_LIVE_SECONDMATE_HOME:
+# an operator-made standalone clone under ${TMPDIR:-/tmp} at this checkout's
+# HEAD with an identical .codex/hooks.json, whose .git/fm-live-secondmate-fixture
+# names its own canonical path (fm_live_sm_fixture_check in tests/fixtures.sh
+# owns every refusal). That clone is the secondmate's own home, its launch's
+# FM_HOME, and its window's cwd. Its hooks load only if the operator's normal
+# native Codex review trusted them at that exact path; an untrusted fixture
+# shows the real review modal and fails readiness. Hook execution is not
+# claimed unless observed. The guard writes only .fm-secondmate-home and
+# data/charter.md there and removes them, and any data/ or state/ it created
+# while empty, on exit. Without the fixture the variant is reported untested,
+# never passed; a refused fixture fails the run.
 # Record the dated per-harness result in
 # docs/verification/runtime-backends.md ("Steering-inbox doorbell").
 #
-# Folder trust: harnesses launch with the repo root as cwd, which the
-# operator's machine has normally already trusted; a trust dialog is a real
-# unready state and correctly fails that harness's check.
+# Folder trust: harnesses other than the Codex secondmate launch with the repo
+# root as cwd, which the operator's machine has normally already trusted; a
+# trust dialog is a real unready state and correctly fails that harness's check.
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -64,6 +77,7 @@ cleanup() {
     kill -CONT "$STOPPED_READER" 2>/dev/null || true
   fi
   tmux -L "$SOCKET" kill-server 2>/dev/null || true
+  fm_live_sm_fixture_cleanup
   fm_test_cleanup
 }
 trap cleanup EXIT
@@ -101,7 +115,7 @@ launch_cmd() {  # <name> [secondmate]
       args=(--mode no-mistakes --yolo off)
       if [ "${2:-}" = secondmate ]; then
         case_dir="$LAB/codex-secondmate-launch"
-        args=(--secondmate)
+        args=("--secondmate=$FM_LIVE_SM_FIXTURE")
       fi
       [ -z "${FM_SEND_INBOX_LIVE_CODEX_MODEL:-}" ] || args+=(--model "$FM_SEND_INBOX_LIVE_CODEX_MODEL")
       launch=$(fm_test_capture_codex_launch "$case_dir" "${args[@]}") || return 1
@@ -159,7 +173,7 @@ wait_ready() {  # <window>
 }
 
 check_harness_doorbell() {  # <name> [secondmate]
-  local name=$1 role=${2:-} label version cmd win home task acted rec handled i ready_rc pane_pid group reader parent send_rc meta
+  local name=$1 role=${2:-} label version cmd win home task acted rec handled i ready_rc pane_pid group reader parent send_rc meta cwd=$ROOT
   label=$name${role:+ $role}
   win="hx-$name${role:+-$role}"
   version=$(harness_version "$name")
@@ -171,13 +185,14 @@ check_harness_doorbell() {  # <name> [secondmate]
   if [ "$role" = secondmate ]; then
     home="$LAB/codex-secondmate-launch/home"
     task=codex-live
+    cwd=$FM_LIVE_SM_FIXTURE
   else
     home="$LAB/$name-home"
     mkdir -p "$home/state"
     task="live-$name"
   fi
   acted="$LAB/acted-$name${role:+-$role}"
-  tmux -L "$SOCKET" new-window -d -t "$SESSION:" -n "$win" -c "$ROOT" \
+  tmux -L "$SOCKET" new-window -d -t "$SESSION:" -n "$win" -c "$cwd" \
     -- bash -lc "export FM_TASK_INBOX=$(printf '%q' "$home/state/$task.inbox"); $cmd" \
     || { FAILED=1; printf 'not ok - %s (%s): could not launch in the isolated tmux server\n' "$label" "$version" >&2; return 0; }
   tmux -L "$SOCKET" set-window-option -t "$SESSION:$win" automatic-rename off
@@ -287,11 +302,33 @@ check_harness_doorbell() {  # <name> [secondmate]
   tmux -L "$SOCKET" kill-window -t "$SESSION:$win" 2>/dev/null || true
 }
 
+check_codex_secondmate() {
+  local fixture rc
+  fixture=$(fm_live_sm_fixture_check "${FM_SEND_INBOX_LIVE_SECONDMATE_HOME:-}" "$ROOT")
+  rc=$?
+  case "$rc" in
+    0) ;;
+    2) note "codex secondmate: $fixture (FM_SEND_INBOX_LIVE_SECONDMATE_HOME)"; return 0 ;;
+    *)
+      FAILED=1
+      printf 'not ok - codex secondmate: inconclusive, dedicated fixture refused: %s\n' "$fixture" >&2
+      return 0
+      ;;
+  esac
+  fm_live_sm_fixture_prepare "$fixture" codex-live || {
+    FAILED=1
+    printf 'not ok - codex secondmate: inconclusive, could not mark the dedicated fixture: %s\n' "$fixture" >&2
+    return 0
+  }
+  check_harness_doorbell codex secondmate
+  fm_live_sm_fixture_cleanup
+}
+
 HARNESSES=${FM_SEND_INBOX_LIVE_HARNESSES:-'claude codex opencode pi grok kimi muse'}
 for h in $HARNESSES; do
   if command -v "$h" >/dev/null 2>&1; then
     check_harness_doorbell "$h"
-    [ "$h" != codex ] || check_harness_doorbell codex secondmate
+    [ "$h" != codex ] || check_codex_secondmate
   else
     note "harness absent, not verified here: $h"
   fi
