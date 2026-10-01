@@ -465,10 +465,15 @@ fm_live_sm_fixture_check() {
 FM_LIVE_SM_FIXTURE=''
 FM_LIVE_SM_MADE_DATA=0
 FM_LIVE_SM_MADE_STATE=0
+# What the secondmate's own startup and hooks were observed to leave in the
+# fixture's state/ (plus an empty terminal-outcomes/). Cleanup removes only
+# these literal names; anything else stops it.
+FM_LIVE_SM_STATE_FILES='.inactive-outcome-reconcile .lock .session-start-agents-baseline .session-start-complete .startup-network.delivered .startup-network.report .startup-network.status .startup-network.timings .trace-context-effective .wake-queue home-summary.json'
 
 # fm_live_sm_fixture_prepare <checked-fixture> <id>
-# Marks the fixture as <id>'s secondmate home. Records which of data/ and
-# state/ (the spawn creates state/) did not exist, so cleanup removes only those.
+# Marks the fixture as <id>'s secondmate home with a finite one-line charter.
+# Records which of data/ and state/ (the spawn creates state/) did not exist,
+# so cleanup removes only those.
 fm_live_sm_fixture_prepare() {
   local abs=$1 id=$2
   FM_LIVE_SM_FIXTURE=$abs
@@ -476,20 +481,88 @@ fm_live_sm_fixture_prepare() {
   [ -d "$abs/state" ] || FM_LIVE_SM_MADE_STATE=1
   mkdir -p "$abs/data" &&
     printf '%s\n' "$id" > "$abs/.fm-secondmate-home" &&
-    printf 'charter for %s\n' "$id" > "$abs/data/charter.md"
+    printf 'Live doorbell check for %s: reply once with one short line, start nothing else, then wait for input.\n' "$id" > "$abs/data/charter.md"
 }
 
 # fm_live_sm_fixture_cleanup
-# Removes exactly what prepare (and the spawn's state/ mkdir) created.
+# Call only once the fixture's Codex processes have exited. Removes exactly
+# what prepare (and the spawn's state/ mkdir) created plus the documented
+# FM_LIVE_SM_STATE_FILES. Any other state/ entry makes it remove nothing,
+# print the unexpected paths, and return 1.
 fm_live_sm_fixture_cleanup() {
-  local abs=$FM_LIVE_SM_FIXTURE
+  local abs=$FM_LIVE_SM_FIXTURE name extra='' known k
   [ -n "$abs" ] || return 0
+  if [ -d "$abs/state" ]; then
+    while IFS= read -r name; do
+      [ -n "$name" ] || continue
+      known=0
+      for k in $FM_LIVE_SM_STATE_FILES; do
+        [ "$name" != "$k" ] || [ -d "$abs/state/$name" ] || known=1
+      done
+      if [ "$name" = terminal-outcomes ] && [ -d "$abs/state/$name" ] && [ ! -L "$abs/state/$name" ] &&
+        [ -z "$(ls -A "$abs/state/$name")" ]; then
+        known=1
+      fi
+      [ "$known" -eq 1 ] || extra="$extra $abs/state/$name"
+    done <<EOF
+$(ls -A "$abs/state")
+EOF
+  fi
+  if [ -n "$extra" ]; then
+    printf 'unexpected fixture state, nothing removed; remove manually:%s\n' "$extra"
+    return 1
+  fi
+  for name in $FM_LIVE_SM_STATE_FILES; do
+    rm -f "$abs/state/$name"
+  done
+  [ ! -d "$abs/state/terminal-outcomes" ] || rmdir "$abs/state/terminal-outcomes"
   rm -f "$abs/.fm-secondmate-home" "$abs/data/charter.md"
   [ "$FM_LIVE_SM_MADE_DATA" -eq 0 ] || rmdir "$abs/data" 2>/dev/null || true
   [ "$FM_LIVE_SM_MADE_STATE" -eq 0 ] || rmdir "$abs/state" 2>/dev/null || true
   FM_LIVE_SM_FIXTURE=''
   FM_LIVE_SM_MADE_DATA=0
   FM_LIVE_SM_MADE_STATE=0
+}
+
+# fm_test_codex_turn_state <sessions-dir> <cwd> <since: UTC YYYY-MM-DDTHH:MM:SS>
+# Codex's own rollout record is the turn evidence: each
+# <sessions-dir>/YYYY/MM/DD/rollout-*.jsonl opens with a session_meta line
+# (payload.cwd, payload.timestamp) and logs event_msg task_started and
+# task_complete per turn. Over sessions at <cwd> started at or after <since>,
+# prints active if any has a started turn without its task_complete, finished
+# if one completed a turn, and none otherwise.
+fm_test_codex_turn_state() {
+  local dir=$1 cwd=$2 since=$3 f last state=none
+  [ -d "$dir" ] || { printf 'none\n'; return 0; }
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    head -1 "$f" | jq -e --arg cwd "$cwd" --arg since "$since" \
+      '.type == "session_meta" and .payload.cwd == $cwd and
+       ((.payload.timestamp // .timestamp // "")[0:19] >= $since)' >/dev/null 2>&1 || continue
+    last=$(jq -r 'select(.type == "event_msg" and
+      (.payload.type == "task_started" or .payload.type == "task_complete")) | .payload.type' "$f" 2>/dev/null | tail -1)
+    case "$last" in
+      task_started) printf 'active\n'; return 0 ;;
+      task_complete) state=finished ;;
+    esac
+  done <<EOF
+$(find "$dir" -type f -name 'rollout-*.jsonl' -mtime -2 2>/dev/null)
+EOF
+  printf '%s\n' "$state"
+}
+
+# fm_test_wait_turn_finished <timeout-seconds> <probe> [args...]
+# Polls <probe> about once a second until it prints finished (returns 0).
+# Returns 1 once the bound expires; callers report that as inconclusive.
+fm_test_wait_turn_finished() {
+  local budget=$1 i=0
+  shift
+  while :; do
+    [ "$("$@")" = finished ] && return 0
+    [ "$i" -lt "$budget" ] || return 1
+    sleep 1
+    i=$((i + 1))
+  done
 }
 
 # fm_test_codex_global_flags <launch command>

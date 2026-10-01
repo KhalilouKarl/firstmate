@@ -2,8 +2,11 @@
 # Deterministic checks of the live doorbell guard's dedicated secondmate
 # fixture (tests/fixtures.sh: fm_live_sm_fixture_check / _prepare / _cleanup).
 # No live Codex and no tokens: this is NOT live secondmate proof. It pins the
-# untested report when no fixture is supplied, the preflight refusals, and that
-# repeated prepare/spawn/cleanup cycles leave a valid fixture reusable and clean.
+# untested report when no fixture is supplied, the preflight refusals, the
+# documented state/ cleanup list and its refusal of anything else, that
+# repeated prepare/spawn/simulated-run/cleanup cycles leave a valid fixture
+# reusable and clean, and the idle-wait decision over a fake Codex rollout tree
+# (fm_test_codex_turn_state / fm_test_wait_turn_finished).
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -73,7 +76,41 @@ OTHER=$(new_fixture other-root)
 printf 'other\n' > "$OTHER/.codex/hooks.json"
 check_rc 1 'hooks.json is missing or differs' 'hooks.json mismatch refused' "$FIX" "$OTHER"
 
-# A valid fixture passes, twice, through the real fm-spawn secondmate path.
+# The documented startup/hook residue a live secondmate leaves in state/.
+simulate_run_state() {  # <fixture>
+  local name
+  mkdir -p "$1/state/terminal-outcomes"
+  for name in $FM_LIVE_SM_STATE_FILES; do
+    printf 'x\n' > "$1/state/$name"
+  done
+}
+
+# An empty state/ is accepted by preflight; an absent one is covered below.
+EMPTY=$(new_fixture emptystate)
+mkdir "$EMPTY/state"
+check_rc 0 "$EMPTY" 'empty state/ accepted' "$EMPTY"
+
+# An unexpected state/ entry stops cleanup: nothing is removed and it is named.
+EXTRA=$(new_fixture extra)
+fm_live_sm_fixture_prepare "$EXTRA" codex-live || fail "extra: prepare failed"
+simulate_run_state "$EXTRA"
+printf 'x\n' > "$EXTRA/state/surprise"
+out=$(fm_live_sm_fixture_cleanup) && fail "cleanup removed state with an unexpected entry"
+assert_contains "$out" "$EXTRA/state/surprise" 'unexpected state entry named'
+assert_present "$EXTRA/state/.lock" 'documented state file kept when cleanup refuses'
+assert_present "$EXTRA/.fm-secondmate-home" 'marker kept when cleanup refuses'
+pass 'unexpected state entry refused with nothing removed'
+FM_LIVE_SM_FIXTURE=''
+mkdir "$EXTRA/state/terminal-outcomes/x" 2>/dev/null || true
+rm "$EXTRA/state/surprise"
+fm_live_sm_fixture_prepare "$EXTRA" codex-live || fail "extra: prepare failed"
+out=$(fm_live_sm_fixture_cleanup) && fail "cleanup accepted a non-empty terminal-outcomes/"
+assert_contains "$out" "$EXTRA/state/terminal-outcomes" 'non-empty terminal-outcomes named'
+pass 'non-empty terminal-outcomes refused'
+FM_LIVE_SM_FIXTURE=''
+
+# A valid fixture passes, twice, through the real fm-spawn secondmate path and
+# the documented state/ residue of a run, with no manual repair in between.
 for cycle in 1 2; do
   abs=$(fm_live_sm_fixture_check "$FIX" "$SRC") || fail "cycle $cycle: valid fixture refused: $abs"
   assert_equals "$FIX" "$abs" "cycle $cycle: check echoes the canonical fixture"
@@ -82,7 +119,8 @@ for cycle in 1 2; do
   assert_contains "$launch" "FM_HOME='$abs'" "cycle $cycle: generated launch runs in the fixture home"
   assert_contains "$launch" '-c disable_paste_burst=true' "cycle $cycle: secondmate launch carries the paste-burst setting"
   assert_not_contains "$launch" '--disable hooks' "cycle $cycle: secondmate keeps hooks on"
-  fm_live_sm_fixture_cleanup
+  simulate_run_state "$abs"
+  fm_live_sm_fixture_cleanup || fail "cycle $cycle: cleanup refused the documented state"
   assert_absent "$FIX/.fm-secondmate-home" "cycle $cycle: marker removed"
   assert_absent "$FIX/data" "cycle $cycle: created data/ removed"
   assert_absent "$FIX/state" "cycle $cycle: created state/ removed"
@@ -90,3 +128,41 @@ for cycle in 1 2; do
   assert_equals '' "$(git -C "$FIX" status --porcelain --ignored)" "cycle $cycle: fixture left clean"
   pass "cycle $cycle: valid fixture prepared, spawned into, and cleaned"
 done
+
+# Idle-wait decision over a fake Codex sessions tree (deterministic, no Codex).
+SESS="$TMP_ROOT/sessions/2026/10/01"
+mkdir -p "$SESS"
+rollout() {  # <name> <cwd> <timestamp> <event...>
+  local f="$SESS/rollout-$1.jsonl" ev
+  shift
+  printf '{"type":"session_meta","payload":{"cwd":"%s","timestamp":"%s"}}\n' "$1" "$2" > "$f"
+  shift 2
+  for ev in "$@"; do
+    printf '{"type":"event_msg","payload":{"type":"%s"}}\n' "$ev" >> "$f"
+  done
+}
+SINCE=2026-10-01T12:00:00
+state() { fm_test_codex_turn_state "$TMP_ROOT/sessions" "$FIX" "$SINCE"; }
+assert_equals none "$(state)" 'no session yet reads none'
+rollout old "$FIX" 2026-10-01T11:59:59.900Z task_started
+rollout elsewhere /tmp/other 2026-10-01T12:00:01.000Z task_started
+assert_equals none "$(state)" 'sessions started before launch or at another cwd are ignored'
+rollout live "$FIX" 2026-10-01T12:00:00.500Z task_started
+assert_equals active "$(state)" 'started turn without task_complete reads active'
+rollout live "$FIX" 2026-10-01T12:00:00.500Z task_started task_complete
+assert_equals finished "$(state)" 'completed initial turn reads finished'
+rollout live "$FIX" 2026-10-01T12:00:00.500Z task_started task_complete task_started
+assert_equals active "$(state)" 'a follow-up turn reads active again'
+pass 'rollout turn state: none, active, finished from the session at this cwd after launch'
+
+probe_fixed() { printf '%s\n' "$1"; }
+fm_test_wait_turn_finished 0 probe_fixed finished || fail 'finished turn not accepted'
+pass 'idle wait: finished turn proceeds'
+fm_test_wait_turn_finished 1 probe_fixed active && fail 'still-active turn accepted'
+pass 'idle wait: still-active turn times out (inconclusive)'
+fm_test_wait_turn_finished 1 probe_fixed composer-not-empty && fail 'non-empty composer accepted'
+pass 'idle wait: finished evidence without an empty composer is not idle'
+FLIP="$TMP_ROOT/flip"
+probe_flip() { if [ -e "$FLIP" ]; then printf 'finished\n'; else : > "$FLIP"; printf 'active\n'; fi; }
+fm_test_wait_turn_finished 3 probe_flip || fail 'turn that finishes within the bound not accepted'
+pass 'idle wait: a turn finishing within the bound proceeds'

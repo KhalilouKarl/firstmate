@@ -880,7 +880,13 @@ It runs only with an opt-in dedicated fixture, `FM_SEND_INBOX_LIVE_SECONDMATE_HO
 That clone is the secondmate's own home, the launch's `FM_HOME`, and the window's working directory.
 Its hooks load only if the operator's normal native Codex hook review trusted them at that exact path; an untrusted fixture shows the review modal and fails readiness.
 The guard claims hook loading under that posture, not hook execution, unless execution is observed.
-It writes only `.fm-secondmate-home` and `data/charter.md` in the fixture, and on exit removes them along with any empty `data/` or `state/` it created.
+Before the doorbell the secondmate must be idle: its composer empty and its initial turn finished, judged from Codex's own rollout for that session (the `session_meta` working directory is the fixture, it started after launch, and its last `task_started` has a `task_complete`).
+If that turn has not finished within `FM_SEND_INBOX_LIVE_IDLE_TIMEOUT` (default 180 seconds), the variant reports `inconclusive: initial turn still active` and fails the run; it is neither a pass nor a negative-control result.
+Only a secondmate verified idle that then fails action plus acknowledgement counts as a flag-removal negative; a refused fixture or an inconclusive idle wait never does.
+The guard prints one result line per variant, so the crewmate and secondmate outcomes are reported separately.
+It writes only `.fm-secondmate-home` and a one-line `data/charter.md` in the fixture.
+Once no process remains in the secondmate pane's process group or with its working directory in the fixture, it removes those two files, the documented `state/` files a live secondmate's startup and hooks leave behind (`.inactive-outcome-reconcile`, `.lock`, `.session-start-agents-baseline`, `.session-start-complete`, `.startup-network.delivered`, `.startup-network.report`, `.startup-network.status`, `.startup-network.timings`, `.trace-context-effective`, `.wake-queue`, `home-summary.json`), an empty `state/terminal-outcomes/`, and any empty `data/` or `state/` it created.
+Any other `state/` entry makes it remove nothing and fail the run naming the unexpected paths; preflight accepts an absent or empty `state/`, so repeated runs need no manual repair.
 Without the fixture the variant is reported untested, never passed; a refused fixture fails the run with its reason.
 `bin/fm-spawn.sh` refuses a secondmate home equal to the Firstmate repo, so run the guard from a separate checkout at the same commit.
 That secondmate variant has not yet been recorded live here; the deterministic checks in `tests/fm-spawn-dispatch-profile.test.sh` and `tests/fm-send-inbox-live-secondmate-fixture.test.sh` are not live evidence.
