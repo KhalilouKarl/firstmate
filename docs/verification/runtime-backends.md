@@ -870,6 +870,11 @@ not ok - codex (codex-cli 0.159.3): doorbell not honored within 240s (acted=no a
 
 With both launch flags restored, the identical command produced the three `ok` lines above and exit 0.
 
+Both runs were repeated on 2026-10-01, on the same machine and versions, against a clean checkout of commit `bb4f670`.
+The negative control again failed with the `not ok` line above and exit 1, with the doorbell left in the composer, and its trap restored `bin/fm-spawn.sh` unchanged.
+The committed fix then produced the three `ok` lines above and exit 0.
+The worker launch replayed by the guard was `codex --model 'gpt-6.1-sol' --dangerously-bypass-approvals-and-sandbox --disable hooks -c disable_paste_burst=true ...`.
+
 ## Waiting-worker command ceilings
 
 The `# Waiting` section of the ship and scout briefs (`bin/fm-brief.sh`) has a worker hold every external wait inside one blocking shell command, bounded by what its harness lets one command run.
