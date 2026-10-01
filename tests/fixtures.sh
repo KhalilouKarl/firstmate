@@ -337,6 +337,35 @@ fm_test_run_spawn() {
     "$ROOT/bin/fm-spawn.sh" "$@" 2>&1
 }
 
+# fm_test_capture_codex_launch <case-dir> <extra fm-spawn args...>
+# Capture the generated launch through the public spawn interface.
+fm_test_capture_codex_launch() {
+  local case_dir=$1 home proj wt fakebin launchlog
+  shift
+  home="$case_dir/home"
+  proj="$case_dir/project"
+  wt="$case_dir/wt"
+  launchlog="$case_dir/launch.log"
+  fakebin=$(fm_test_make_spawn_fakebin "$case_dir/fake")
+  fm_test_spawn_home "$home" codex
+  fm_test_spawn_brief "$home" codex-live
+  fm_git_worktree "$proj" "$wt" codex-live
+  : > "$launchlog"
+  FM_FAKE_LAUNCH_LOG="$launchlog" \
+    fm_test_run_spawn "$home" "$wt" "$fakebin" codex-live "$proj" "$@" >/dev/null 2>&1 ||
+    fail "fm-spawn could not build a codex launch"
+  cat "$launchlog"
+}
+
+# fm_test_codex_global_flags <launch command>
+# The generated flags before the positional encoded brief.
+fm_test_codex_global_flags() {
+  local launch=$1 flags
+  flags=${launch#*codex }
+  flags=${flags%%\"\$(*}
+  printf '%s' "$flags"
+}
+
 # --- send-world stubs -------------------------------------------------------
 
 # make_stubs <dir>

@@ -591,6 +591,8 @@ test_codex_crewmate_launch_disables_the_hook_layer() {
   launch=$(cat "$LAUNCH_LOG")
   assert_contains "$launch" "--disable hooks" \
     "codex crewmate launch did not disable the hook layer that blocks it on a trust modal"
+  assert_contains "$launch" "-c disable_paste_burst=true" \
+    "codex crewmate launch can swallow queued Enter as paste content when its TUI reader is backlogged"
   # The opposite posture: this flag RUNS the untrusted hooks instead of
   # disabling them, so a launch must never reach for it.
   assert_not_contains "$launch" "--dangerously-bypass-hook-trust" \
@@ -616,6 +618,8 @@ test_codex_secondmate_launch_keeps_the_hook_layer() {
   launch=$(cat "$LAUNCH_LOG")
   assert_not_contains "$launch" "--disable hooks" \
     "codex secondmate launch disabled the project hooks its own primary supervision depends on"
+  assert_contains "$launch" "-c disable_paste_burst=true" \
+    "managed codex secondmate launch left its automated steering input subject to paste-burst detection"
   pass "a codex secondmate keeps the project hook layer its primary session runs on"
 }
 
