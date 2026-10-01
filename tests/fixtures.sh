@@ -471,7 +471,8 @@ FM_LIVE_SM_MADE_STATE=0
 FM_LIVE_SM_STATE_FILES='.inactive-outcome-reconcile .lock .session-start-agents-baseline .session-start-complete .startup-network.delivered .startup-network.report .startup-network.status .startup-network.timings .trace-context-effective .wake-queue home-summary.json'
 
 # fm_live_sm_fixture_prepare <checked-fixture> <id>
-# Marks the fixture as <id>'s secondmate home with a finite one-line charter.
+# Marks the fixture as <id>'s secondmate home. The charter is only the input
+# fm-spawn needs to build the launch; the replayed launch delivers no brief.
 # Records which of data/ and state/ (the spawn creates state/) did not exist,
 # so cleanup removes only those.
 fm_live_sm_fixture_prepare() {
@@ -481,7 +482,7 @@ fm_live_sm_fixture_prepare() {
   [ -d "$abs/state" ] || FM_LIVE_SM_MADE_STATE=1
   mkdir -p "$abs/data" &&
     printf '%s\n' "$id" > "$abs/.fm-secondmate-home" &&
-    printf 'Live doorbell check for %s: reply once with one short line, start nothing else, then wait for input.\n' "$id" > "$abs/data/charter.md"
+    printf 'charter for %s\n' "$id" > "$abs/data/charter.md"
 }
 
 # fm_live_sm_fixture_cleanup
@@ -529,21 +530,25 @@ EOF
 # <sessions-dir>/YYYY/MM/DD/rollout-*.jsonl opens with a session_meta line
 # (payload.cwd, payload.timestamp) and logs event_msg task_started and
 # task_complete per turn. Over sessions at <cwd> started at or after <since>,
-# prints active if any has a started turn without its task_complete, finished
-# if one completed a turn, and none otherwise.
+# prints active if any has a task_started without a later task_complete,
+# completed if one finished a turn, none if no turn started (no such session,
+# or none in it), and invalid if the evidence cannot be read or parsed.
 fm_test_codex_turn_state() {
   local dir=$1 cwd=$2 since=$3 f last state=none
-  [ -d "$dir" ] || { printf 'none\n'; return 0; }
+  [ -e "$dir" ] || { printf 'none\n'; return 0; }
+  [ -d "$dir" ] && [ -r "$dir" ] && [ -x "$dir" ] || { printf 'invalid\n'; return 0; }
   while IFS= read -r f; do
     [ -n "$f" ] || continue
+    head -1 "$f" 2>/dev/null | jq -e 'type == "object"' >/dev/null 2>&1 || { printf 'invalid\n'; return 0; }
     head -1 "$f" | jq -e --arg cwd "$cwd" --arg since "$since" \
       '.type == "session_meta" and .payload.cwd == $cwd and
        ((.payload.timestamp // .timestamp // "")[0:19] >= $since)' >/dev/null 2>&1 || continue
     last=$(jq -r 'select(.type == "event_msg" and
-      (.payload.type == "task_started" or .payload.type == "task_complete")) | .payload.type' "$f" 2>/dev/null | tail -1)
-    case "$last" in
+      (.payload.type == "task_started" or .payload.type == "task_complete")) | .payload.type' "$f" 2>/dev/null) ||
+      { printf 'invalid\n'; return 0; }
+    case "$(printf '%s\n' "$last" | tail -1)" in
       task_started) printf 'active\n'; return 0 ;;
-      task_complete) state=finished ;;
+      task_complete) state=completed ;;
     esac
   done <<EOF
 $(find "$dir" -type f -name 'rollout-*.jsonl' -mtime -2 2>/dev/null)
@@ -551,18 +556,53 @@ EOF
   printf '%s\n' "$state"
 }
 
-# fm_test_wait_turn_finished <timeout-seconds> <probe> [args...]
-# Polls <probe> about once a second until it prints finished (returns 0).
-# Returns 1 once the bound expires; callers report that as inconclusive.
-fm_test_wait_turn_finished() {
-  local budget=$1 i=0
-  shift
+# fm_test_wait_codex_idle <timeout-seconds> <quiet-polls> <probe> [args...]
+# Read-only readiness: polls <probe>, which prints "<composer-state>
+# <turn-state>", about once a second. Prints the verified state and returns 0
+# once the composer reads empty and the turn none or completed for
+# <quiet-polls> consecutive polls; otherwise prints the last inconclusive
+# reason and returns 1 when <timeout-seconds> expires. It sends nothing.
+fm_test_wait_codex_idle() {
+  local budget=$1 quiet=$2 i=0 run=0 obs composer turn why
+  shift 2
   while :; do
-    [ "$("$@")" = finished ] && return 0
-    [ "$i" -lt "$budget" ] || return 1
+    obs=$("$@")
+    composer=${obs%% *}
+    turn=${obs#* }
+    case "$composer:$turn" in
+      empty:none|empty:completed)
+        run=$((run + 1))
+        why="inconclusive: not quiet for $quiet consecutive polls"
+        ;;
+      *)
+        run=0
+        case "$turn" in
+          active) why='inconclusive: turn active' ;;
+          none|completed) why="inconclusive: composer not readable or not empty (${composer:-unknown})" ;;
+          *) why='inconclusive: turn evidence unreadable or invalid' ;;
+        esac
+        ;;
+    esac
+    if [ "$run" -ge "$quiet" ]; then
+      if [ "$turn" = none ]; then
+        printf 'verified idle: no turn started\n'
+      else
+        printf 'verified idle: initial turn completed\n'
+      fi
+      return 0
+    fi
+    [ "$i" -lt "$budget" ] || { printf '%s\n' "$why"; return 1; }
     sleep 1
     i=$((i + 1))
   done
+}
+
+# fm_test_codex_secondmate_cmd <launch command> [<daemon option + space>]
+# What the live guard executes for a secondmate: the generated environment
+# prefix (it points the hooks at the fixture home), codex, and the generated
+# global flags, with no positional launch brief.
+fm_test_codex_secondmate_cmd() {
+  printf '%s' "unset CODEX_THREAD_ID; ${1%%codex *}codex ${2:-}$(fm_test_codex_global_flags "$1")"
 }
 
 # fm_test_codex_global_flags <launch command>

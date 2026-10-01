@@ -5,8 +5,10 @@
 # untested report when no fixture is supplied, the preflight refusals, the
 # documented state/ cleanup list and its refusal of anything else, that
 # repeated prepare/spawn/simulated-run/cleanup cycles leave a valid fixture
-# reusable and clean, and the idle-wait decision over a fake Codex rollout tree
-# (fm_test_codex_turn_state / fm_test_wait_turn_finished).
+# reusable and clean, the read-only readiness decision over a fake Codex
+# rollout tree and composer (fm_test_codex_turn_state /
+# fm_test_wait_codex_idle) with a fake send counter, and the executed
+# secondmate command (fm_test_codex_secondmate_cmd).
 set -u
 
 # shellcheck source=tests/fixtures.sh
@@ -129,7 +131,9 @@ for cycle in 1 2; do
   pass "cycle $cycle: valid fixture prepared, spawned into, and cleaned"
 done
 
-# Idle-wait decision over a fake Codex sessions tree (deterministic, no Codex).
+# Readiness decision over a fake Codex sessions tree and a fake composer
+# (deterministic, no Codex). A fake send counts input; it must stay zero
+# whenever readiness does not proceed.
 SESS="$TMP_ROOT/sessions/2026/10/01"
 mkdir -p "$SESS"
 rollout() {  # <name> <cwd> <timestamp> <event...>
@@ -147,22 +151,60 @@ assert_equals none "$(state)" 'no session yet reads none'
 rollout old "$FIX" 2026-10-01T11:59:59.900Z task_started
 rollout elsewhere /tmp/other 2026-10-01T12:00:01.000Z task_started
 assert_equals none "$(state)" 'sessions started before launch or at another cwd are ignored'
+rollout live "$FIX" 2026-10-01T12:00:00.500Z
+assert_equals none "$(state)" 'session with no turn reads none'
 rollout live "$FIX" 2026-10-01T12:00:00.500Z task_started
 assert_equals active "$(state)" 'started turn without task_complete reads active'
 rollout live "$FIX" 2026-10-01T12:00:00.500Z task_started task_complete
-assert_equals finished "$(state)" 'completed initial turn reads finished'
+assert_equals completed "$(state)" 'completed turn reads completed'
 rollout live "$FIX" 2026-10-01T12:00:00.500Z task_started task_complete task_started
 assert_equals active "$(state)" 'a follow-up turn reads active again'
-pass 'rollout turn state: none, active, finished from the session at this cwd after launch'
+printf '{"type":"event_msg","payload":\n' >> "$SESS/rollout-live.jsonl"
+assert_equals invalid "$(state)" 'unparsable event in this session reads invalid'
+printf 'not json\n' > "$SESS/rollout-live.jsonl"
+assert_equals invalid "$(state)" 'unparsable session header reads invalid'
+rm "$SESS/rollout-live.jsonl"
+assert_equals invalid "$(fm_test_codex_turn_state "$SESS/rollout-old.jsonl" "$FIX" "$SINCE")" 'unreadable sessions dir reads invalid'
+pass 'rollout turn state: none, active, completed, invalid from the session at this cwd after launch'
 
+SENT=0
+fake_send() { SENT=$((SENT + 1)); }
+# ready <expected-rc> <expected-report> <label> <timeout> <probe...>
+# Mirrors the guard: input is sent only when readiness returns 0.
+ready() {
+  local want_rc=$1 want=$2 label=$3 budget=$4 out rc
+  shift 4
+  SENT=0
+  out=$(fm_test_wait_codex_idle "$budget" 2 "$@")
+  rc=$?
+  [ "$rc" -ne 0 ] || fake_send
+  expect_code "$want_rc" "$rc" "$label"
+  assert_equals "$want" "$out" "$label: report"
+  assert_equals "$((1 - want_rc))" "$SENT" "$label: input sent only after verified idle"
+  pass "$label"
+}
 probe_fixed() { printf '%s\n' "$1"; }
-fm_test_wait_turn_finished 0 probe_fixed finished || fail 'finished turn not accepted'
-pass 'idle wait: finished turn proceeds'
-fm_test_wait_turn_finished 1 probe_fixed active && fail 'still-active turn accepted'
-pass 'idle wait: still-active turn times out (inconclusive)'
-fm_test_wait_turn_finished 1 probe_fixed composer-not-empty && fail 'non-empty composer accepted'
-pass 'idle wait: finished evidence without an empty composer is not idle'
-FLIP="$TMP_ROOT/flip"
-probe_flip() { if [ -e "$FLIP" ]; then printf 'finished\n'; else : > "$FLIP"; printf 'active\n'; fi; }
-fm_test_wait_turn_finished 3 probe_flip || fail 'turn that finishes within the bound not accepted'
-pass 'idle wait: a turn finishing within the bound proceeds'
+ready 0 'verified idle: no turn started' 'no turn, empty composer proceeds after the quiet window' 3 probe_fixed 'empty none'
+ready 0 'verified idle: initial turn completed' 'completed turn, empty composer proceeds' 3 probe_fixed 'empty completed'
+ready 1 'inconclusive: turn active' 'active turn never proceeds' 2 probe_fixed 'empty active'
+ready 1 'inconclusive: composer not readable or not empty (unknown)' 'unknown composer never proceeds' 2 probe_fixed 'unknown none'
+ready 1 'inconclusive: composer not readable or not empty (pending)' 'non-empty composer never proceeds' 2 probe_fixed 'pending completed'
+ready 1 'inconclusive: turn evidence unreadable or invalid' 'invalid rollout never proceeds' 2 probe_fixed 'empty invalid'
+TICK="$TMP_ROOT/tick"
+probe_flap() {  # alternates idle and active, so it is never quiet for 2 polls
+  if [ -s "$TICK" ]; then : > "$TICK"; printf 'empty active\n'; else printf 'x\n' > "$TICK"; printf 'empty none\n'; fi
+}
+: > "$TICK"
+ready 1 'inconclusive: not quiet for 2 consecutive polls' 'never-quiet window never proceeds' 2 probe_flap
+ready 1 'inconclusive: not quiet for 2 consecutive polls' 'window shorter than the quiet bound never proceeds' 0 probe_fixed 'empty none'
+
+# The executed secondmate command: generated env prefix, codex, the daemon
+# option and generated flags, hooks on, and no positional launch brief.
+launch=$(fm_test_capture_codex_launch "$TMP_ROOT/case-cmd" --secondmate)
+cmd=$(fm_test_codex_secondmate_cmd "$launch" '--no-daemon ')
+assert_contains "$cmd" "FM_HOME='$TMP_ROOT/case-cmd/secondmate-home'" 'executed command keeps the generated env prefix'
+assert_contains "$cmd" 'codex --no-daemon --dangerously-bypass-approvals-and-sandbox -c disable_paste_burst=true' 'executed command carries --no-daemon and the paste-burst setting'
+assert_not_contains "$cmd" '--disable hooks' 'executed secondmate command keeps hooks on'
+assert_not_contains "$cmd" 'launch-brief' 'executed secondmate command has no positional brief'
+assert_not_contains "$cmd" 'charter.md' 'executed secondmate command delivers no charter'
+pass 'executed secondmate command: env prefix, --no-daemon, generated flags, no positional brief'

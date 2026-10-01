@@ -36,19 +36,26 @@
 # owns every refusal). That clone is the secondmate's own home, its launch's
 # FM_HOME, and its window's cwd. Its hooks load only if the operator's normal
 # native Codex review trusted them at that exact path; an untrusted fixture
-# shows the real review modal and fails readiness. Hook execution is not
-# claimed unless observed. Before the doorbell the secondmate must be idle:
-# its composer empty AND its initial turn finished per Codex's own rollout
-# (fm_test_codex_turn_state: session_meta cwd = the fixture, started after
-# launch, task_complete after the last task_started), within
-# FM_SEND_INBOX_LIVE_IDLE_TIMEOUT (seconds, default 180); otherwise it is
-# reported `inconclusive: initial turn still active`, never a pass or a
-# negative-control result. The guard writes only .fm-secondmate-home and a
-# one-line data/charter.md there. Once the fixture's Codex processes are gone
-# it removes them, the documented state/ files its startup and hooks leave
-# (FM_LIVE_SM_STATE_FILES), an empty state/terminal-outcomes, and any data/
-# or state/ it created; any other state/ entry fails the run, naming it, with
-# nothing removed. Without the fixture the variant is reported untested,
+# shows the real review modal and never reads as idle. Hook execution is not
+# claimed unless observed. The executed command is the generated environment
+# prefix, codex, --no-daemon where supported, and the generated global flags:
+# no positional launch brief, so no turn starts before the doorbell (logged as
+# `<positional brief present: no>`). The secondmate gets no input, not even a
+# modal-dismissing key, until fm_test_wait_codex_idle reads its composer as
+# empty and its Codex rollout for this fixture cwd since launch as no turn
+# started or turn completed (fm_test_codex_turn_state), for 5 consecutive
+# one-second polls within FM_SEND_INBOX_LIVE_IDLE_TIMEOUT (seconds, default
+# 180). Otherwise it reports `inconclusive: turn active`, `inconclusive:
+# composer not readable or not empty (<state>)`, `inconclusive: turn evidence
+# unreadable or invalid`, or not quiet, sends nothing, and fails the run;
+# that is never a pass or a negative-control result. An earlier version of
+# this guard wrongly required an initial turn to finish; this launch has none.
+# The guard writes only .fm-secondmate-home and data/charter.md there (the
+# charter is fm-spawn's launch input; it is never delivered). Once the
+# fixture's Codex processes are gone it removes them, the documented state/
+# files its startup and hooks leave (FM_LIVE_SM_STATE_FILES), an empty
+# state/terminal-outcomes, and any data/ or state/ it created; any other
+# state/ entry fails the run, naming it, with nothing removed. Without the fixture the variant is reported untested,
 # never passed; a refused fixture fails the run. Results print per variant.
 # Record the dated per-harness result in
 # docs/verification/runtime-backends.md ("Steering-inbox doorbell").
@@ -178,9 +185,7 @@ launch_cmd() {  # <name> [secondmate]
         isolated='--no-daemon '
       fi
       if [ "${2:-}" = secondmate ]; then
-        # Keep the generated environment too: it points the secondmate's
-        # hooks at its fixture home, never at the operator's.
-        printf '%s' "unset CODEX_THREAD_ID; ${launch%%codex *}codex $isolated$flags"
+        fm_test_codex_secondmate_cmd "$launch" "$isolated"
       else
         printf '%s' "env -u CODEX_THREAD_ID codex $isolated$flags"
       fi
@@ -224,15 +229,14 @@ wait_ready() {  # <window>
   return 2
 }
 
-# The secondmate's idle evidence: composer empty and Codex's rollout for this
-# pane's cwd shows its initial turn finished (see fm_test_codex_turn_state).
-secondmate_turn_probe() {  # <window> <since>
-  [ "$(fm_tmux_composer_state "$SESSION:$1")" = empty ] || { printf 'composer-not-empty\n'; return 0; }
-  fm_test_codex_turn_state "${CODEX_HOME:-$HOME/.codex}/sessions" "$FM_LIVE_SM_FIXTURE" "$2"
+# The secondmate's read-only idle evidence for fm_test_wait_codex_idle.
+secondmate_idle_probe() {  # <window> <since>
+  printf '%s %s\n' "$(fm_tmux_composer_state "$SESSION:$1")" \
+    "$(fm_test_codex_turn_state "${CODEX_HOME:-$HOME/.codex}/sessions" "$FM_LIVE_SM_FIXTURE" "$2")"
 }
 
 check_harness_doorbell() {  # <name> [secondmate]
-  local name=$1 role=${2:-} label version cmd win home task acted rec handled i ready_rc pane_pid group reader parent send_rc meta cwd=$ROOT since
+  local name=$1 role=${2:-} label version cmd win home task acted rec handled i ready_rc pane_pid group reader parent send_rc meta cwd=$ROOT since idle
   label=$name${role:+ $role}
   win="hx-$name${role:+-$role}"
   version=$(harness_version "$name")
@@ -245,6 +249,7 @@ check_harness_doorbell() {  # <name> [secondmate]
     home="$LAB/codex-secondmate-launch/home"
     task=codex-live
     cwd=$FM_LIVE_SM_FIXTURE
+    note "$label executed: $cmd <positional brief present: no>"
   else
     home="$LAB/$name-home"
     mkdir -p "$home/state"
@@ -261,26 +266,26 @@ check_harness_doorbell() {  # <name> [secondmate]
     pane_pid=$(tmux -L "$SOCKET" display-message -p -t "$SESSION:$win" '#{pane_pid}')
     SM_GROUP=$(ps -o pgid= -p "$pane_pid" | tr -d '[:space:]')
   fi
-  wait_ready "$win"; ready_rc=$?
-  if [ "$ready_rc" -eq 1 ]; then
-    FAILED=1
-    printf 'not ok - %s (%s): composer stayed visibly pending; the pane is not steerable\n' "$label" "$version" >&2
-    tmux -L "$SOCKET" capture-pane -p -t "$SESSION:$win" 2>/dev/null | grep '[^[:space:]]' | tail -6 | sed 's/^/#   /' >&2
-    tmux -L "$SOCKET" kill-window -t "$SESSION:$win" 2>/dev/null || true
-    return 0
-  fi
-  [ "$ready_rc" -eq 0 ] || note "$label ($version): idle composer never classified empty; proceeding as production does (advisory check skips only on pending)"
   if [ "$role" = secondmate ]; then
-    if ! fm_test_wait_turn_finished "$IDLE_TIMEOUT" secondmate_turn_probe "$win" "$since"; then
+    if ! idle=$(fm_test_wait_codex_idle "$IDLE_TIMEOUT" 5 secondmate_idle_probe "$win" "$since"); then
       FAILED=1
-      VERDICT='inconclusive: initial turn still active (not a negative-control result)'
-      printf 'not ok - %s (%s): inconclusive: initial turn still active after %ss (last evidence: %s)\n' \
-        "$label" "$version" "$IDLE_TIMEOUT" "$(secondmate_turn_probe "$win" "$since")" >&2
+      VERDICT="$idle (no input sent; not a negative-control result)"
+      printf 'not ok - %s (%s): %s within %ss; no input sent\n' "$label" "$version" "$idle" "$IDLE_TIMEOUT" >&2
       tmux -L "$SOCKET" capture-pane -p -t "$SESSION:$win" 2>/dev/null | grep '[^[:space:]]' | tail -6 | sed 's/^/#   /' >&2
       tmux -L "$SOCKET" kill-window -t "$SESSION:$win" 2>/dev/null || true
       return 0
     fi
-    pass "$label ($version): verified idle before the doorbell (initial turn task_complete in its Codex rollout, composer empty)"
+    pass "$label ($version): $idle before the doorbell (composer empty, rollout quiet for 5 polls)"
+  else
+    wait_ready "$win"; ready_rc=$?
+    if [ "$ready_rc" -eq 1 ]; then
+      FAILED=1
+      printf 'not ok - %s (%s): composer stayed visibly pending; the pane is not steerable\n' "$label" "$version" >&2
+      tmux -L "$SOCKET" capture-pane -p -t "$SESSION:$win" 2>/dev/null | grep '[^[:space:]]' | tail -6 | sed 's/^/#   /' >&2
+      tmux -L "$SOCKET" kill-window -t "$SESSION:$win" 2>/dev/null || true
+      return 0
+    fi
+    [ "$ready_rc" -eq 0 ] || note "$label ($version): idle composer never classified empty; proceeding as production does (advisory check skips only on pending)"
   fi
   if [ "$role" = secondmate ]; then
     # Keep the spawn-recorded secondmate meta; only its window is private here.
@@ -368,10 +373,10 @@ check_harness_doorbell() {  # <name> [secondmate]
     CHECKED=$((CHECKED + 1))
     pass "$label ($version): the doorbell reached a real worker, which acted and acked with the mv"
     [ "$name" != codex ] || pass "$label ($version): queued text and Enter submitted after reader pause without a recovery re-ring"
-    [ "$role" != secondmate ] || VERDICT='pass (verified idle)'
+    [ "$role" != secondmate ] || VERDICT="pass ($idle)"
   else
     FAILED=1
-    [ "$role" != secondmate ] || VERDICT='fail after verified idle (discriminating)'
+    [ "$role" != secondmate ] || VERDICT="fail after $idle (discriminating)"
     printf 'not ok - %s (%s): doorbell not honored within %ss (acted=%s acked=%s)\n' \
       "$label" "$version" "$TIMEOUT" "$([ -e "$acted" ] && echo yes || echo no)" \
       "$([ -f "$handled" ] && echo yes || echo no)" >&2
