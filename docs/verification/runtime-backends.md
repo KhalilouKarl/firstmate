@@ -875,6 +875,9 @@ The negative control again failed with the `not ok` line above and exit 1, with 
 The committed fix then produced the three `ok` lines above and exit 0.
 The worker launch replayed by the guard was `codex --model 'gpt-6.1-sol' --dangerously-bypass-approvals-and-sandbox --disable hooks -c disable_paste_burst=true ...`.
 
+The guard now also replays the generated secondmate launch, which keeps hooks on and points them at its own fixture home, and steers it as a recorded secondmate.
+That secondmate variant has not yet been recorded live here; the deterministic launch-shape check in `tests/fm-spawn-dispatch-profile.test.sh` is not live evidence.
+
 ## Waiting-worker command ceilings
 
 The `# Waiting` section of the ship and scout briefs (`bin/fm-brief.sh`) has a worker hold every external wait inside one blocking shell command, bounded by what its harness lets one command run.

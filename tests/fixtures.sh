@@ -337,10 +337,24 @@ fm_test_run_spawn() {
     "$ROOT/bin/fm-spawn.sh" "$@" 2>&1
 }
 
-# fm_test_capture_codex_launch <case-dir> <extra fm-spawn args...>
-# Capture the generated launch through the public spawn interface.
+# make_seeded_secondmate_home <home> <id>
+# The minimal marked home a --secondmate spawn launches into.
+make_seeded_secondmate_home() {
+  local home=$1 id=$2
+  mkdir -p "$home/bin" "$home/data"
+  printf '# Firstmate\n' > "$home/AGENTS.md"
+  printf '%s\n' "$id" > "$home/.fm-secondmate-home"
+  printf 'charter for %s\n' "$id" > "$home/data/charter.md"
+  printf '%s\n' 'projects/' 'state/' 'data/' 'config/' '.no-mistakes/' > "$home/.gitignore"
+  git -C "$home" init -q -b main
+}
+
+# fm_test_capture_codex_launch <case-dir> [--secondmate] <extra fm-spawn args...>
+# Capture the generated launch through the public spawn interface. The task is
+# codex-live in <case-dir>/home; --secondmate launches it into a seeded
+# <case-dir>/secondmate-home instead of a project worktree.
 fm_test_capture_codex_launch() {
-  local case_dir=$1 home proj wt fakebin launchlog
+  local case_dir=$1 home proj wt fakebin launchlog target
   shift
   home="$case_dir/home"
   proj="$case_dir/project"
@@ -350,9 +364,14 @@ fm_test_capture_codex_launch() {
   fm_test_spawn_home "$home" codex
   fm_test_spawn_brief "$home" codex-live
   fm_git_worktree "$proj" "$wt" codex-live
+  target=$proj
+  if [ "${1:-}" = --secondmate ]; then
+    target="$case_dir/secondmate-home"
+    make_seeded_secondmate_home "$target" codex-live
+  fi
   : > "$launchlog"
   FM_FAKE_LAUNCH_LOG="$launchlog" \
-    fm_test_run_spawn "$home" "$wt" "$fakebin" codex-live "$proj" "$@" >/dev/null 2>&1 ||
+    fm_test_run_spawn "$home" "$wt" "$fakebin" codex-live "$target" "$@" >/dev/null 2>&1 ||
     fail "fm-spawn could not build a codex launch"
   cat "$launchlog"
 }

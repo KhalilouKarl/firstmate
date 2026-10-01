@@ -77,16 +77,6 @@ enable_dispatch_profile() {
     > "$home/config/crew-dispatch.json"
 }
 
-make_seeded_secondmate_home() {
-  local home=$1 id=$2
-  mkdir -p "$home/bin" "$home/data"
-  printf '# Firstmate\n' > "$home/AGENTS.md"
-  printf '%s\n' "$id" > "$home/.fm-secondmate-home"
-  printf 'charter for %s\n' "$id" > "$home/data/charter.md"
-  printf '%s\n' 'projects/' 'state/' 'data/' 'config/' '.no-mistakes/' > "$home/.gitignore"
-  git -C "$home" init -q -b main
-}
-
 task_inbox_export() {  # <home> <id>
   local state
   state=$(CDPATH='' cd -- "$1/state" && pwd -P) || fail "cannot resolve state dir $1/state"
