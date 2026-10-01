@@ -861,6 +861,15 @@ ok - codex (codex-cli 0.159.3): queued text and Enter submitted after reader pau
 ok - live steering-inbox doorbell guard: 1 harness(es) honored the doorbell contract
 ```
 
+The negative control ran the same command on the same day and machine, with only the two managed launch occurrences of `-c disable_paste_burst=true` temporarily removed from `bin/fm-spawn.sh` and an `EXIT` trap restoring the file.
+It failed with exit 1, and the captured pane still held the short inbox doorbell in the composer:
+
+```text
+not ok - codex (codex-cli 0.159.3): doorbell not honored within 240s (acted=no acked=no)
+```
+
+With both launch flags restored, the identical command produced the three `ok` lines above and exit 0.
+
 ## Waiting-worker command ceilings
 
 The `# Waiting` section of the ship and scout briefs (`bin/fm-brief.sh`) has a worker hold every external wait inside one blocking shell command, bounded by what its harness lets one command run.
