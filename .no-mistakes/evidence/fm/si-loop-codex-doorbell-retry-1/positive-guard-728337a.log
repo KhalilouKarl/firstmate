@@ -1,0 +1,20 @@
+FM_TEST_BEGIN 2026-10-01T14:22:41Z tests/fm-send-inbox-doorbell-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
+ok - codex (codex-cli 0.159.3): the doorbell reached a real worker, which acted and acked with the mv
+ok - codex (codex-cli 0.159.3): queued text and Enter submitted after reader pause without a recovery re-ring
+not ok - codex secondmate (codex-cli 0.159.3): doorbell not honored within 240s (acted=no acked=no)
+#   › PreToolUse            3           1           2           Before a tool executes
+#     PermissionRequest     0           0           0           When permission is requested
+#     PostToolUse           0           0           0           After a tool executes
+#     PreCompact            0           0           0           Before context compaction
+#     PostCompact           0           0           0           After context compaction
+#     SessionStart          1           0           1           When a new session starts
+#     SessionEnd            0           0           0           Right before a session ends
+#     UserPromptSubmit      0           0           0           When the user submits a prompt
+#   ↓
+#     t trust all · enter review · esc close
+not ok - live steering-inbox doorbell guard found failures above
+FM_TEST_END 2026-10-01T14:28:07Z tests/fm-send-inbox-doorbell-live-e2e.test.sh exit=1 duration_ms=326606 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=326820
+FM_TEST_SUMMARY_FAMILY family=live-harness-optin count=1 duration_ms=326606 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-send-inbox-doorbell-live-e2e.test.sh duration_ms=326606
+exit=1

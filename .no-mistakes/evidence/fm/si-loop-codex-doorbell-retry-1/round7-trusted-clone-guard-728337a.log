@@ -1,0 +1,12 @@
+# cwd=/tmp/si-loop/test-728337a-wt head=728337a49f2fdd5168a0650ce4da505ee155d40c tree=7f6406fc07fdc9d22620d040add913b6a07fd239 hooks_sha256=c86e0e67325ebe5cbf914106ecdebff8356edcf7485020929948f97cf782c06b status=[] codex-cli 0.159.3 date=2026-10-01T15:58:24Z
+FM_TEST_BEGIN 2026-10-01T15:58:24Z tests/fm-send-inbox-doorbell-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
+ok - codex (codex-cli 0.159.3): the doorbell reached a real worker, which acted and acked with the mv
+ok - codex (codex-cli 0.159.3): queued text and Enter submitted after reader pause without a recovery re-ring
+ok - codex secondmate (codex-cli 0.159.3): the doorbell reached a real worker, which acted and acked with the mv
+ok - codex secondmate (codex-cli 0.159.3): queued text and Enter submitted after reader pause without a recovery re-ring
+ok - live steering-inbox doorbell guard: 2 harness(es) honored the doorbell contract
+FM_TEST_END 2026-10-01T16:00:05Z tests/fm-send-inbox-doorbell-live-e2e.test.sh exit=0 duration_ms=100420 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=0 skipped_gate=0 duration_ms=100673
+FM_TEST_SUMMARY_FAMILY family=live-harness-optin count=1 duration_ms=100420 failed=0
+FM_TEST_SLOWEST rank=1 script=tests/fm-send-inbox-doorbell-live-e2e.test.sh duration_ms=100420
+exit=0

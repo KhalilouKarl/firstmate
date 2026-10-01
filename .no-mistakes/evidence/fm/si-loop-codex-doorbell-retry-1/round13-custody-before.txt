@@ -1,0 +1,15 @@
+549e07f37fd73aa01d74cd126b1111c99175abed
+refs/heads/fm/si-loop-codex-doorbell 43cd006330a013a0e91decd7b264e0763f66b7b6
+refs/heads/fm/si-loop-codex-doorbell-retry-1 5dd2e085ae5a38c91fa952c480d02a69935b6c97
+refs/heads/main eb77f02b16aeca9533102070de34b1f8812f4fa2
+refs/no-mistakes/recover-local/01M3VHJTK81ZC69VN2V748KPRW 1377e7a59986397de42df4e94c23ca72a493c603
+refs/no-mistakes/recover/01M3VHJTK81ZC69VN2V748KPRW 43cd006330a013a0e91decd7b264e0763f66b7b6
+refs/no-mistakes/recover/01M3VJYQHVKRN790T2DFY21RV9 5dd2e085ae5a38c91fa952c480d02a69935b6c97
+refs/remotes/no-mistakes/fm/si-loop-codex-doorbell 1377e7a59986397de42df4e94c23ca72a493c603
+refs/remotes/no-mistakes/fm/si-loop-codex-doorbell-retry-1 5dd2e085ae5a38c91fa952c480d02a69935b6c97
+refs/remotes/origin/HEAD eb77f02b16aeca9533102070de34b1f8812f4fa2
+refs/remotes/origin/fm/fm-effort-doorbell-fix a77cbe7633dbe9f73087717521812834200483fc
+refs/remotes/origin/main eb77f02b16aeca9533102070de34b1f8812f4fa2
+refs/remotes/origin/si-loop/relaunch-pr-poll-rearm eb77f02b16aeca9533102070de34b1f8812f4fa2
+refs/remotes/upstream/main 549e07f37fd73aa01d74cd126b1111c99175abed
+b56262cdb12f39169467c301352fc24e02bdb2c80a47548d6b9248071f94cc73  /tmp/si-loop/doorbell-round13/.git/FETCH_HEAD

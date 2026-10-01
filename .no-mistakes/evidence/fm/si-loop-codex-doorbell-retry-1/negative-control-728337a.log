@@ -1,0 +1,15 @@
+FM_TEST_BEGIN 2026-10-01T14:28:39Z tests/fm-send-inbox-doorbell-live-e2e.test.sh family=live-harness-optin expected_gate_skip=live-capability
+not ok - codex (codex-cli 0.159.3): doorbell not honored within 240s (acted=no acked=no)
+#     >_ OpenAI Codex (v0.159.3)
+#        /tmp/si-loop/test-728337a-wt
+#     permissions: YOLO mode
+#     Practical, peculiar, or a little of both?
+#   › : Firstmate instruction waiting: list "$FM_TASK_INBOX"/*.msg in your 'live-codex.inbox' steering inbox, read and act on each in numeric order, then mv each into its handled/.
+#     GPT-6.1-Sol medium · /tmp/si-loop/test-728337a-wt
+not ok - codex secondmate (codex-cli 0.159.3): doorbell not honored within 240s (acted=no acked=no)
+not ok - live steering-inbox doorbell guard found failures above
+FM_TEST_END 2026-10-01T14:38:03Z tests/fm-send-inbox-doorbell-live-e2e.test.sh exit=1 duration_ms=563918 gate_skip=false
+FM_TEST_SUMMARY total=1 failed=1 skipped_gate=0 duration_ms=564195
+FM_TEST_SUMMARY_FAMILY family=live-harness-optin count=1 duration_ms=563918 failed=1
+FM_TEST_SLOWEST rank=1 script=tests/fm-send-inbox-doorbell-live-e2e.test.sh duration_ms=563918
+exit=1

@@ -1,0 +1,11 @@
+GENERATED SECONDMATE LAUNCH (brief elided):
+unset CODEX_THREAD_ID; export COMPACT_ADVISER_DISABLE=1; export FM_TASK_INBOX='<LAB>/sm/home/state/codex-live.inbox'; export GIT_CONFIG_COUNT=1 GIT_CONFIG_KEY_0=core.hooksPath GIT_CONFIG_VALUE_0='<LAB>/sm/home/state/codex-live.git-hooks'; FM_ROOT_OVERRIDE= FM_STATE_OVERRIDE= FM_DATA_OVERRIDE= FM_PROJECTS_OVERRIDE= FM_CONFIG_OVERRIDE= FM_PUBLIC_FOLLOWUP_PRIMARY_HOME='<LAB>/sm/home' FM_HOME='<LAB>/sm/secondmate-home' FM_TRACE_CONTEXT=off FM_SUPERVISION_MODEL=persistent env -u CURSOR_AGENT -u CURSOR_INVOKED_AS -u GEMINI_CLI codex --no-daemon --model 'gpt-6.1-sol' --dangerously-bypass-approvals-and-sandbox -c disable_paste_burst=true 
+
+PANE AFTER 25s (no input sent):
+  Hooks need review
+  4 hooks are new or changed.
+  Hooks can run outside the sandbox after you trust them.
+› 1. Review hooks
+  2. Trust all and continue
+  3. Continue without trusting (hooks won't run)
+  enter confirm · esc skip
