@@ -1,0 +1,16 @@
+stored reason: fm-hold-v1:UGljayAoQSkgb3IgKEIpCjEwMCUgc3VyZT8=
+help[2]:
+  - Run `tasks-axi unhold held-choice` to resume dispatch
+  - Run `tasks-axi ready --include-held` to review paused work
+--- tasks-axi list (raw)
+  held-choice,queued,captain,fixture,Decision,"fm-hold-v1:UGljayAoQSkgb3IgKEIpCjEwMCUgc3VyZT8=",captain
+help[2]:
+  - Run `tasks-axi show <id>` for full notes on a task
+  - Run `tasks-axi ready` to see unblocked queued work
+--- snapshot records
+"tasks-axi"
+{"id":"held-choice","hold_reason":"Pick (A) or (B)\n100% sure?","hold_kind":"captain"}
+--- fleet view
+| --- | --- | --- | --- | --- | --- |
+| held-choice | Decision | fixture | captain | - | - |
+

@@ -1,0 +1,14 @@
+## tests/fm-fleet-snapshot-view.test.sh
+ok - snapshot includes durable scout reports after teardown
+ok - snapshot parses tasks-axi rows and respects operational overrides
+ok - fleet view renders the snapshot without secondmate peek guidance
+ok - fleet view renders secondmate agent liveness
+ok - adapter reads are bounded, complete or diagnosed, strictly decoded, and markdown homes are untouched
+ok - a real tasks-axi/Beads backlog reaches the snapshot, view and bearings, ignoring a stale shadow file
+ok - unavailable, unreadable and empty adapter backlogs are told apart
+ok - real adapter link cells parse faithfully, and an unprovable doc-link cell is withheld with a disclosure
+exit=0
+## tests/fm-captain-hold-lifecycle.test.sh
+fm-captain-hold: compatible tasks-axi is required
+not ok - hold refused the reason for sample-reason-call
+exit=1
