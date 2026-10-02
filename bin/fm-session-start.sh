@@ -46,7 +46,8 @@
 #                       detected primary harness.
 #   5. read-once contract - the do-not-re-read contract covering every source
 #                       represented by the two digests below.
-#   6. fleet digest   - a compact data/backlog.md identity/metadata listing,
+#   6. fleet digest   - a compact backlog identity/metadata listing (the
+#                       configured backend's queue; see BACKLOG DIGEST),
 #                       every state/*.meta, a bounded state/*.status tail,
 #                       the away posture (state/.afk-contract and the legacy
 #                       state/.afk daemon flag), and a cheap per-task
@@ -190,7 +191,8 @@
 # unbounded digest is no longer merely slow - it can strand a whole session or
 # first turn behind one hung subprocess. Every remaining step is local, but
 # local is not the same as bounded: tool version probes and the backlog
-# listing are unbounded subprocesses, while each per-task endpoint read runs
+# listing (except a configured non-markdown backend's, bounded per group by
+# FM_BACKLOG_ROW_TIMEOUT_SECS) are unbounded subprocesses, while each per-task endpoint read runs
 # in its own crash-isolated child under FM_SESSION_START_ENDPOINT_TIMEOUT
 # (default 10s). So the whole digest still runs as ONE bounded child of this
 # script (FM_SESSION_START_TIMEOUT, default 120s). The deferred network stage

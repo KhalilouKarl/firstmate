@@ -140,7 +140,7 @@ So an unreachable host can no longer consume this budget.
 Some digest work remains local but unbounded:
 
 - Tool version probes.
-- The backlog listing.
+- The backlog listing, except a configured non-markdown backend's (bounded below).
 
 So the whole digest still runs as one bounded child, default 120s via `FM_SESSION_START_TIMEOUT`.
 
