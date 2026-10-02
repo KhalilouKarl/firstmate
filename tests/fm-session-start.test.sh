@@ -2375,7 +2375,7 @@ test_backlog_configured_backend_incomplete_or_failed_group_is_unavailable() {
   abin=$(adapter_bin adapter-bin-sim-break simulate)
   for variant in in_flight=fail held=truncated blocked=short ready=short ready=truncated empty:in_flight=emptybad; do
     populated=populated
-    case "$variant" in empty:*) populated=; variant=${variant#empty:} ;; esac
+    case "$variant" in empty:*) populated=''; variant=${variant#empty:} ;; esac
     group=${variant%%=*}
     mode=${variant#*=}
     rec=$(beads_world "backlog-beads-break-$group-$mode-${populated:-empty}" "$abin" $populated)
@@ -2391,6 +2391,28 @@ EOF
     assert_not_contains "$section" "(no backlog item title lines found)" "a failed group looked like an empty inventory ($variant)"
   done
   pass "a failing or incomplete group makes the configured listing unavailable instead of empty or partial"
+}
+
+# A backend configuration that cannot be read is not evidence of an empty or
+# absent queue either.
+test_backlog_unreadable_backend_configuration_is_unavailable() {
+  local rec root home fakebin out section
+  rec=$(new_world backlog-unreadable-config)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_tasks_axi_compact "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  write_long_body_backlog "$home/data/backlog.md"
+  mkdir -p "$home/.tasks.toml"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  section=$(backlog_section "$out")
+
+  assert_contains "$section" "Backlog unavailable (unresolved)" "an unreadable backend configuration must be disclosed as unavailable"
+  assert_not_contains "$section" "compact-startup" "the shadow data/backlog.md must not stand in for an unreadable configured backend"
+  pass "an unreadable backlog backend configuration is disclosed as unavailable, not as a stale queue"
 }
 
 # --- runtime bound -----------------------------------------------------------
@@ -3284,6 +3306,7 @@ test_backlog_configured_backend_without_a_shadow_file_is_not_absent
 test_backlog_configured_backend_reads_the_adapter_not_the_shadow_file
 test_backlog_configured_backend_valid_empty_queue_is_distinguishable
 test_backlog_configured_backend_incomplete_or_failed_group_is_unavailable
+test_backlog_unreadable_backend_configuration_is_unavailable
 test_fleet_digest_empty_fleet
 test_next_step_sources_x_mode_cadence
 test_next_step_afk_delegates_to_daemon

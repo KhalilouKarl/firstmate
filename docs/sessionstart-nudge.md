@@ -152,6 +152,8 @@ The per-item backlog row reads inside bootstrap's reconcile and close-replay swe
 Each of those reads is bounded by `FM_BACKLOG_ROW_TIMEOUT_SECS` (default 10s) through `bin/fm-backlog-transition-lib.sh`.
 The first bound hit latches the sweep.
 Later reads in that sweep then return immediately while still naming their own item.
+The startup listing of a configured non-markdown backlog backend reads each of its four groups under the same bound.
+A group that times out, fails or returns an incomplete answer makes that listing print `Backlog unavailable (<backend>)` instead of an empty or partial queue.
 
 When timeout, gtimeout, and perl are unavailable, the shared timeout owner falls back to a pure-Bash process-group watchdog.
 So no supported host runs the digest unbounded.
