@@ -1556,6 +1556,63 @@ test_adapter_reads_are_bounded_complete_and_strictly_decoded() {
   pass "adapter reads are bounded, complete or diagnosed, strictly decoded, and markdown homes are untouched"
 }
 
+test_adapter_hold_reasons_decode_like_markdown() {
+  real_adapter_available || return 0
+  local guard beads markdown home owner reason encoded stored snap md_snap view bearings
+  reason=$'Pick (A) or (B)\n100% sure?'
+  guard=$(adapter_guard adapter-hold-guard)
+  beads=$(adapter_home adapter-hold-beads "$guard" beads)
+  markdown=$(adapter_home adapter-hold-markdown "$guard" markdown)
+  # bin/fm-captain-hold.sh is the owner of the stored form and needs a tasks-axi at or above
+  # FM_TASKS_AXI_MIN; below it the owner's encoder and the real tasks-axi hold write the same stored value.
+  owner=encoder
+  if (. "$ROOT/bin/fm-tasks-axi-lib.sh" && PATH="$guard/guard-bin:$PATH" fm_tasks_axi_compatible); then
+    owner=script
+  fi
+  for home in "$beads" "$markdown"; do
+    if [ "$owner" = script ]; then
+      adapter_run "$home" "$guard" bash "$ROOT/bin/fm-captain-hold.sh" hold encoded-call \
+        --title "Fixture encoded call" --repo fixture --reason "$reason" > /dev/null \
+        || fail "fm-captain-hold.sh hold failed for the encoded reason in $home"
+      adapter_run "$home" "$guard" bash "$ROOT/bin/fm-captain-hold.sh" hold plain-call \
+        --title "Fixture plain call" --repo fixture --reason "Plain reason, with a comma" > /dev/null \
+        || fail "fm-captain-hold.sh hold failed for the plain reason in $home"
+    else
+      encoded=$(. "$ROOT/bin/fm-hold-reason-lib.sh" && fm_hold_reason_encode "$reason")
+      adapter_axi "$home" "$guard" add encoded-call "Fixture encoded call" --kind captain --repo fixture
+      adapter_axi "$home" "$guard" hold encoded-call --reason "$encoded" --kind captain
+      adapter_axi "$home" "$guard" add plain-call "Fixture plain call" --kind captain --repo fixture
+      adapter_axi "$home" "$guard" hold plain-call --reason "Plain reason, with a comma" --kind captain
+    fi
+  done
+  # The reason really is stored encoded on the adapter backend, so a decode that never ran cannot pass.
+  stored=$(cd "$beads" && adapter_run "$beads" "$guard" tasks-axi list --fields hold_reason | grep '^ encoded-call,')
+  case "$stored" in
+    *fm-hold-v1:*) ;;
+    *) fail "the adapter backend should store the encoded reason, got: $stored" ;;
+  esac
+  snap=$(adapter_snapshot "$beads" "$guard") || fail "adapter-backed snapshot failed"
+  md_snap=$(adapter_snapshot "$markdown" "$guard") || fail "markdown control snapshot failed"
+  printf '%s' "$snap" | jq -e --arg reason "$reason" '
+    def rec($id): .backlog.records[] | select(.id == $id);
+    (rec("encoded-call") | .hold_reason == $reason and .hold_kind == "captain" and .hold_bucket == "live"
+      and .captain_actionable == true)
+    and (rec("plain-call") | .hold_reason == "Plain reason, with a comma" and .captain_actionable == true)
+  ' > /dev/null || fail "adapter hold reasons should be decoded once and plain reasons left alone: $(printf '%s' "$snap" | jq -c '[.backlog.records[] | {id,hold_reason}]')"
+  jq -n --argjson a "$snap" --argjson b "$md_snap" '
+    def pick($s; $id): $s.backlog.records[] | select(.id == $id) | {hold_reason,hold_kind,hold_bucket,captain_actionable};
+    all(["encoded-call","plain-call"][]; . as $id | pick($a; $id) == pick($b; $id))
+  ' | grep -qx true || fail "adapter and markdown homes should expose identical hold reasons"
+  view=$(adapter_run "$beads" "$guard" "$VIEW") || fail "fleet view failed on the adapter-backed home"
+  assert_not_contains "$view" "fm-hold-v1:" "the fleet view must not show the stored hold encoding"
+  bearings=$(adapter_run "$beads" "$guard" "$ROOT/bin/fm-bearings-snapshot.sh" --json) || fail "bearings failed on the adapter-backed home"
+  printf '%s' "$bearings" | jq -e '
+    ([.decisions_open[] | select(.id == "encoded-call") | .summary | contains("Pick (A) or (B)") and (contains("fm-hold-v1") | not)] == [true])
+    and ([.decisions_open[] | select(.id == "plain-call") | .summary | contains("Plain reason, with a comma")] == [true])
+  ' > /dev/null || fail "bearings should show the decoded reason in its open decisions"
+  pass "captain hold reasons on a real tasks-axi/Beads home decode like markdown, plain reasons unchanged (owner: $owner)"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_home_summary_excludes_secondmate_from_child_inventory
@@ -1578,3 +1635,4 @@ test_adapter_reads_are_bounded_complete_and_strictly_decoded
 test_adapter_backlog_reaches_snapshot_view_and_bearings
 test_adapter_unavailable_unreadable_and_empty_backlogs
 test_adapter_link_values_parse_faithfully_with_the_adapter_grammar
+test_adapter_hold_reasons_decode_like_markdown
