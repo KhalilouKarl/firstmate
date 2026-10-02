@@ -57,7 +57,7 @@ printf '%s\n' "$SNAPSHOT" | jq -r '
     elif ($r.blocked_reason // "") == "" then $r.blocked_by
     else "\($r.blocked_by) - \($r.blocked_reason)" end;
   def backlog_artifact($r):
-    if $r.links_ambiguous == true then "links ambiguous: \($r.links_raw)"
+    if $r.links_ambiguous == true then "links ambiguous: \($r.links_raw | gsub("\\|"; "\\|"))"
     else dash($r.pr_url // $r.report_path // $r.local_note) end;
   def backlog_row($r):
     "| \($r.id // "-") | \(dash($r.title // $r.raw)) | \(dash($r.repo)) | \(dash($r.kind)) | \(blocker($r)) | \(backlog_artifact($r)) |";

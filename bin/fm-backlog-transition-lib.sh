@@ -589,7 +589,8 @@ def validate_row($r):
         ($cnt.n | tonumber) as $n
         | (if $cnt.m == null then $n else ($cnt.m | tonumber) end) as $total
         | if $n != $total then {ok: false, incomplete: true, count: $n, total: $total, error: "incomplete adapter output: \($n) of \($total) rows"}
-          elif $n == 0 and ($lines | length) >= 2 and ($lines[1] | test("^tasks: 0 tasks in this backlog$")) then {ok: true, rows: []}
+          elif $n == 0 and ($lines | length) >= 4 and ($lines[1] | test("^tasks: 0 tasks in this backlog$"))
+               and ($lines[2] | test("^help\\[[0-9]+\\]:( .*)?$")) and ($lines[3:] | all(test("^  - .*$"))) then {ok: true, rows: []}
           else
             ($lines[1] // "" | cap("^tasks\\[(?<k>[0-9]+)\\]\\{(?<cols>[a-z_,]+)\\}:$")) as $hdr
             | if $hdr == null then bad("malformed adapter output: no table header")
@@ -657,7 +658,7 @@ fm_backlog_rows_list_once() {  # [flag...] sets FM_BACKLOG_ROWS_OUT, FM_BACKLOG_
     return 1
   }
   # shellcheck disable=SC2016  # Expansion is deliberately deferred to the child shell.
-  FM_BACKLOG_ROWS_OUT=$(fm_run_timed "$secs" bash -c 'cd "$1" 2>/dev/null || exit 1; shift; exec tasks-axi list "$@"' \
+  FM_BACKLOG_ROWS_OUT=$(fm_run_timed "$secs" bash -c 'cd "$1" 2>/dev/null || exit 1; shift; exec env -u TASKS_AXI_FILE tasks-axi list "$@"' \
     _ "$FM_BACKLOG_AXI_ROOT" --fields "$FM_BACKLOG_ROWS_FIELDS" "$@" 2>"$errfile")
   status=$?
   FM_BACKLOG_ROWS_ERR=$(sed -n '1p' "$errfile" 2>/dev/null)

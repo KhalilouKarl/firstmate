@@ -1197,7 +1197,7 @@ SH
 adapter_run() {  # <home> <guard> <command...> - one command against one fixture home only
   local home=$1 guard=$2
   shift 2
-  PATH="$guard/guard-bin:$guard/fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
+  env -u TASKS_AXI_FILE PATH="$guard/guard-bin:$guard/fakebin:$PATH" FM_HOME="$home" FM_STATE_OVERRIDE="$home/state" \
     FM_DATA_OVERRIDE="$home/data" FM_CONFIG_OVERRIDE="$home/config" FM_PROJECTS_OVERRIDE="$home/projects" \
     FM_SNAPSHOT_NOW=2026-10-02T00:00:00Z "$@"
 }
@@ -1428,6 +1428,7 @@ adapter_shim() {  # <guard>
   cat > "$guard/guard-bin/tasks-axi" <<SH
 #!/usr/bin/env bash
 echo "\$*" >> "$guard/shim-calls"
+echo "TASKS_AXI_FILE=\${TASKS_AXI_FILE-unset}" > "$guard/shim-env"
 if [ "\${1:-}" != list ]; then echo "shim: only list is replayed" >&2; exit 90; fi
 mode=\$(cat "$guard/shim-mode")
 case "\$mode" in
@@ -1613,6 +1614,88 @@ test_adapter_hold_reasons_decode_like_markdown() {
   pass "captain hold reasons on a real tasks-axi/Beads home decode like markdown, plain reasons unchanged (owner: $owner)"
 }
 
+test_adapter_fixtures_ignore_an_inherited_tasks_axi_file() {
+  real_adapter_available || return 0
+  local guard home decoy decoy_before snap
+  guard=$(adapter_guard adapter-axi-file-guard)
+  home=$(adapter_home adapter-axi-file "$guard" markdown)
+  decoy=$TMP_ROOT/adapter-axi-file-decoy.md
+  printf '## Queued\n- [ ] decoy-row - Decoy row (repo: decoy) (kind: ship)\n' > "$decoy"
+  decoy_before=$(cat "$decoy")
+
+  # A markdown fixture is where an inherited override would redirect a write.
+  export TASKS_AXI_FILE="$decoy"
+  adapter_axi "$home" "$guard" add fixture-row "Fixture row" --kind ship --repo fixture
+  snap=$(adapter_snapshot "$home" "$guard") || fail "snapshot failed with an inherited TASKS_AXI_FILE"
+  unset TASKS_AXI_FILE
+  [ "$(cat "$decoy")" = "$decoy_before" ] || fail "fixture helpers must not write through an inherited TASKS_AXI_FILE"
+  printf '%s' "$snap" | jq -e '[.backlog.records[].id] == ["fixture-row"]' > /dev/null \
+    || fail "fixture helpers should write the fixture backlog, got: $(printf '%s' "$snap" | jq -c '[.backlog.records[].id]')"
+  pass "an inherited TASKS_AXI_FILE does not redirect the fixture helpers"
+}
+
+test_adapter_list_clears_an_inherited_tasks_axi_file() {
+  local guard home snap
+  guard=$(adapter_guard adapter-list-axi-file-guard)
+  adapter_shim "$guard"
+  home=$(adapter_home adapter-list-axi-file "$guard" shim)
+  shim_set "$guard" ok "$ADAPTER_CAPTURES/list-all-states.toon"
+  snap=$(adapter_run "$home" "$guard" env TASKS_AXI_FILE="$TMP_ROOT/adapter-list-decoy.md" "$SNAPSHOT" --json) \
+    || fail "snapshot failed with a decoy TASKS_AXI_FILE"
+  printf '%s' "$snap" | jq -e '.backlog.present == true and (.backlog.records | length) == 7' > /dev/null \
+    || fail "the snapshot should show the adapter rows"
+  [ "$(cat "$guard/shim-env")" = "TASKS_AXI_FILE=unset" ] \
+    || fail "tasks-axi list must run with TASKS_AXI_FILE cleared, saw: $(cat "$guard/shim-env")"
+  pass "the adapter read runs with an inherited TASKS_AXI_FILE cleared"
+}
+
+test_adapter_empty_backlog_requires_the_complete_response() {
+  local guard home snap variant out
+  guard=$(adapter_guard adapter-empty-shim-guard)
+  adapter_shim "$guard"
+  home=$(adapter_home adapter-empty-shim "$guard" shim)
+
+  shim_set "$guard" ok "$ADAPTER_CAPTURES/list-empty.toon"
+  snap=$(adapter_snapshot "$home" "$guard") || fail "snapshot failed on the captured empty response"
+  printf '%s' "$snap" | jq -e '.backlog.present == true and .backlog.error == null and .backlog.records == [] and .main_inventory.valid == true' > /dev/null \
+    || fail "the complete captured empty response stays a valid empty inventory"
+
+  for variant in count-only no-help bad-help trailing-garbage bad-help-line; do
+    out=$TMP_ROOT/shim-empty-$variant.toon
+    case "$variant" in
+      count-only) sed -n '1p' "$ADAPTER_CAPTURES/list-empty.toon" > "$out" ;;
+      no-help) sed -n '1,2p' "$ADAPTER_CAPTURES/list-empty.toon" > "$out" ;;
+      bad-help) { sed -n '1,2p' "$ADAPTER_CAPTURES/list-empty.toon"; printf 'garbage\n'; } > "$out" ;;
+      trailing-garbage) { cat "$ADAPTER_CAPTURES/list-empty.toon"; printf 'garbage\n'; } > "$out" ;;
+      bad-help-line) { cat "$ADAPTER_CAPTURES/list-empty.toon"; printf 'tasks: 0 tasks in this backlog\n'; } > "$out" ;;
+    esac
+    shim_set "$guard" ok "$out"
+    snap=$(adapter_snapshot "$home" "$guard") || fail "snapshot must survive a bad empty response ($variant)"
+    printf '%s' "$snap" | jq -e '
+      .backlog.present == false and .backlog.records == [] and (.backlog.error | startswith("malformed adapter output"))
+      and .main_inventory.valid == false and (.main_inventory.reason | startswith("Backlog unavailable: "))
+    ' > /dev/null || fail "an incomplete empty response ($variant) must be Backlog unavailable, got: $(printf '%s' "$snap" | jq -c '[.backlog.present, .backlog.error]')"
+  done
+  pass "only the complete captured empty response is a valid empty backlog"
+}
+
+test_view_escapes_pipes_in_ambiguous_link_values() {
+  local guard home view row cells
+  guard=$(adapter_guard adapter-pipe-guard)
+  adapter_shim "$guard"
+  home=$(adapter_home adapter-pipe "$guard" shim)
+  sed '3s#"pr:https://github.com/o/a,b/pull/7,report:data/a,report:b/report.md"#"pr:https://h/pull/1|x,pr:https://h/pull/2/pull/3"#' \
+    "$ADAPTER_CAPTURES/list-all-states.toon" > "$TMP_ROOT/shim-pipe.toon"
+  shim_set "$guard" ok "$TMP_ROOT/shim-pipe.toon"
+  view=$(adapter_run "$home" "$guard" "$VIEW") || fail "fleet view failed on an ambiguous link value with a pipe"
+  row=$(printf '%s\n' "$view" | grep '^| odd-links |')
+  [ -n "$row" ] || fail "view should render the odd-links row"
+  assert_contains "$row" 'links ambiguous: pr:https://h/pull/1\|x,' "the raw ambiguous value should keep its pipe, escaped"
+  cells=$(printf '%s' "$row" | sed 's/\\|//g' | tr -cd '|' | wc -c | tr -d ' ')
+  [ "$cells" = 7 ] || fail "an ambiguous value with a pipe must keep the six-column table row, got $((cells - 1)) cells: $row"
+  pass "a pipe in an ambiguous link value does not add a table column"
+}
+
 test_empty_fleet_json
 test_fixture_snapshot_json
 test_home_summary_excludes_secondmate_from_child_inventory
@@ -1636,3 +1719,7 @@ test_adapter_backlog_reaches_snapshot_view_and_bearings
 test_adapter_unavailable_unreadable_and_empty_backlogs
 test_adapter_link_values_parse_faithfully_with_the_adapter_grammar
 test_adapter_hold_reasons_decode_like_markdown
+test_adapter_fixtures_ignore_an_inherited_tasks_axi_file
+test_adapter_list_clears_an_inherited_tasks_axi_file
+test_adapter_empty_backlog_requires_the_complete_response
+test_view_escapes_pipes_in_ambiguous_link_values
