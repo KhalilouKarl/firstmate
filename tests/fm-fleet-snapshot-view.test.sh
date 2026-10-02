@@ -1586,7 +1586,7 @@ test_adapter_hold_reasons_decode_like_markdown() {
     fi
   done
   # The reason really is stored encoded on the adapter backend, so a decode that never ran cannot pass.
-  stored=$(cd "$beads" && adapter_run "$beads" "$guard" tasks-axi list --fields hold_reason | grep '^ encoded-call,')
+  stored=$(cd "$beads" && adapter_run "$beads" "$guard" tasks-axi list --fields hold_reason | grep '^  encoded-call,')
   case "$stored" in
     *fm-hold-v1:*) ;;
     *) fail "the adapter backend should store the encoded reason, got: $stored" ;;
@@ -1596,7 +1596,7 @@ test_adapter_hold_reasons_decode_like_markdown() {
   printf '%s' "$snap" | jq -e --arg reason "$reason" '
     def rec($id): .backlog.records[] | select(.id == $id);
     (rec("encoded-call") | .hold_reason == $reason and .hold_kind == "captain" and .hold_bucket == "live"
-      and .captain_actionable == true)
+       and .captain_actionable == true)
     and (rec("plain-call") | .hold_reason == "Plain reason, with a comma" and .captain_actionable == true)
   ' > /dev/null || fail "adapter hold reasons should be decoded once and plain reasons left alone: $(printf '%s' "$snap" | jq -c '[.backlog.records[] | {id,hold_reason}]')"
   jq -n --argjson a "$snap" --argjson b "$md_snap" '
