@@ -652,6 +652,16 @@ print_backlog_compact() {
       subsection "configured backlog ($backend)"
       print_backlog_configured "$backend"
       return 0
+    elif [ "$addressing_status" -ne 0 ]; then
+      # The data directory is missing, so the addressing root is its parent,
+      # whose .tasks.toml still names the backend. A non-markdown backend is
+      # authoritative: never answer ABSENT for it.
+      backend=$(fm_tasks_axi_backend "${DATA%/*}" 2>/dev/null) || backend=unresolved
+      if [ "$backend" != markdown ]; then
+        subsection "configured backlog ($backend)"
+        print_backlog_unavailable "$backend" "${FM_BACKLOG_TRANSITION_ERROR:-the backlog data directory cannot be resolved: $DATA}"
+        return 0
+      fi
     fi
   fi
   subsection "$label"

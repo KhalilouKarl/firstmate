@@ -2461,6 +2461,26 @@ EOF
   pass "an unreadable backlog backend configuration is disclosed as unavailable, not as a stale queue"
 }
 
+# A configured non-Markdown backend whose data directory is missing is still
+# the authoritative queue: it must be disclosed as unavailable, never ABSENT.
+test_backlog_beads_home_without_data_dir_is_unavailable_not_absent() {
+  real_adapter_available || return 0
+  local abin rec root home fakebin out section
+  abin=$(adapter_bin adapter-bin-real)
+  rec=$(beads_world backlog-beads-no-data-dir "$abin")
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  rm -rf "$home/data"
+
+  out=$(run_session_start "$home" "$root" "$abin:$fakebin:$BASE_PATH")
+  section=$(backlog_section "$out")
+
+  assert_contains "$section" "Backlog unavailable (beads)" "a Beads home without a data directory was not disclosed as unavailable"
+  assert_not_contains "$section" "ABSENT" "a Beads home without a data directory printed the Markdown ABSENT marker"
+  pass "a Beads home without a data directory is disclosed as unavailable, not ABSENT"
+}
+
 # --- runtime bound -----------------------------------------------------------
 #
 # The digest runs on a session-open hook that blocks session initialization, so
@@ -3355,6 +3375,7 @@ test_backlog_configured_backend_incomplete_or_failed_group_is_unavailable
 test_backlog_configured_backend_ready_public_followups_table_is_not_incomplete
 test_backlog_markdown_home_without_data_dir_keeps_absent_marker
 test_backlog_unreadable_backend_configuration_is_unavailable
+test_backlog_beads_home_without_data_dir_is_unavailable_not_absent
 test_fleet_digest_empty_fleet
 test_next_step_sources_x_mode_cadence
 test_next_step_afk_delegates_to_daemon
