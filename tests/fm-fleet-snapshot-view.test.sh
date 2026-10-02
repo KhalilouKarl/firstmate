@@ -1296,7 +1296,8 @@ test_adapter_backlog_reaches_snapshot_view_and_bearings() {
     and (rec("held-choice") | .hold_kind == "captain" and .hold_reason == $reason and .hold_bucket == "live"
          and .captain_actionable == true)
     and (rec("dated-hold") | .hold_bucket == "dated" and .hold_until == "2099-01-01" and .captain_actionable == false)
-    and (rec("done-work") | .state == "done" and .completion.verb == "merged" and .pr_url == "https://github.com/o/r/pull/338")
+    and (rec("done-work") | .state == "done" and .completion.verb == null and .merged == null
+         and .completion.date != null and .closed == .completion.date and .pr_url == "https://github.com/o/r/pull/338")
     and (rec("done-report") | .state == "done" and .kind == "scout" and .completion.verb == "reported"
          and .report_path == "data/done-report/report.md")
     and (rec("done-local") | .completion.verb == "done" and .local_note == "local main")
@@ -1340,9 +1341,14 @@ test_adapter_backlog_reaches_snapshot_view_and_bearings() {
     and ([.gates[].id] | index("dated-hold") != null)
     and ([.gates[].id] | index("queued-work") != null)
     and ([.gates[].id] | index("(main-inventory)") != null)
-    and ([.landed[].id] | index("done-work") != null)
+    and ([.landed[].id] | index("done-work") == null)
+    and ([.landed[].id] | index("done-report") != null)
     and ([.omitted[].surface] | map(select(startswith("main in-flight backlog item(s) have no child metadata"))) | length == 1)
-  ' > /dev/null || fail "bearings should surface the adapter held call, dated gate, landed row and orphan disclosure"
+  ' > /dev/null || fail "bearings should surface the adapter held call, dated gate and orphan disclosure, and must not report a PR-linked closed row as landed"
+  # tasks-axi records no merge state, so a closed row with a PR link is closed work with an unverified merge; explicit Markdown merged metadata still lands.
+  printf '%s' "$md_snap" | jq -e '
+    .backlog.records[] | select(.id == "done-work") | .completion.verb == "merged" and .pr_url == "https://github.com/o/r/pull/338"
+  ' > /dev/null || fail "the Markdown control should still report its explicitly merged row as merged"
   [ ! -e "$guard/endpoint-calls" ] || fail "fixture homes must never reach an endpoint tool: $(cat "$guard/endpoint-calls")"
   pass "a real tasks-axi/Beads backlog reaches the snapshot, view and bearings, ignoring a stale shadow file"
 }

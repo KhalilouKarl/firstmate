@@ -539,7 +539,7 @@ def build_row($c; $cols; $order):
   | ([$lk.items[] | select(.kind == "report") | .value][0] // null) as $report
   | (if $f.state == "done" and $tp.visible != null and ($tp.visible | test("[[:space:]]local main$")) then "local main" else null end) as $local_note
   | (if $f.state != "done" then {verb: null, date: null}
-     elif $pr != null then {verb: "merged", date: ($f.closed | dash_null)}
+     # tasks-axi records no merge state: `done --pr` links a PR without checking it, so a link is never proof of a merge
      elif $report != null and $f.kind == "scout" then {verb: "reported", date: ($f.closed | dash_null)}
      elif $local_note != null then {verb: "done", date: ($f.closed | dash_null)}
      else {verb: null, date: ($f.closed | dash_null)} end) as $completion
