@@ -2188,7 +2188,7 @@ real_adapter_available() {  # prints the explicit not-run line when a real tool 
 # plus a guarded br (only inside this test's temp root, never --db). With
 # `simulate` the tasks-axi is a wrapper that reports a compatible version and
 # delegates reads to the real one, logging each call with its TASKS_AXI_FILE and
-# optionally breaking one group: FM_FAKE_AXI_BREAK=<in_flight|held|blocked|ready>=<fail|truncated|short|emptybad>.
+# optionally breaking one group: FM_FAKE_AXI_BREAK=<in_flight|held|blocked|ready>=<fail|truncated|short|emptybad|followups>.
 adapter_bin() {
   local dir=$TMP_ROOT/$1 real_axi real_br
   mkdir -p "$dir"
@@ -2226,6 +2226,11 @@ case "${FM_FAKE_AXI_BREAK:-}" in
     printf '%s\n' "$out" | awk '{ l[NR] = $0 } END { for (i = NR; i >= 1; i--) if (l[i] ~ /^  [^ -]/) { drop = i; break } for (i = 1; i <= NR; i++) if (i != drop) print l[i] }'
     exit 0 ;;
   "$group=emptybad") printf '%s\n' "$out" | sed -n '1p;3,$p'; exit 0 ;;
+  "$group=followups")
+    # Real ready output carries a second table (ready_public_followups) with indented rows.
+    printf '%s\n' "$out"
+    printf '%s\n' 'ready_public_followups[1]{id,state,kind,repo,title}:' '  pf-1,queued,ship,fixture,Public followup'
+    exit 0 ;;
 esac
 printf '%s\n' "$out"
 exit "$rc"
@@ -2364,6 +2369,47 @@ EOF
   assert_contains "$section" "count: 0" "an empty configured queue did not show the adapter's own empty answer"
   assert_not_contains "$section" "Backlog unavailable" "a valid empty queue was reported unavailable"
   pass "a valid empty configured queue shows the adapter's empty answer, distinct from unavailable"
+}
+
+# tasks-axi ready prints a second indented table (ready_public_followups) after
+# the ready table; its rows must not make a healthy ready group look incomplete.
+test_backlog_configured_backend_ready_public_followups_table_is_not_incomplete() {
+  real_adapter_available || return 0
+  local abin rec root home fakebin out section
+  abin=$(adapter_bin adapter-bin-sim-followups simulate)
+  rec=$(beads_world backlog-beads-followups "$abin" populated)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  out=$(FM_FAKE_AXI_BREAK="ready=followups" run_session_start "$home" "$root" "$abin:$fakebin:$BASE_PATH")
+  section=$(backlog_section "$out")
+
+  assert_not_contains "$section" "Backlog unavailable" "a following ready_public_followups table made a healthy ready group incomplete"
+  assert_contains "$section" "alpha,in_flight,ship,fixture,Alpha work" "the in-flight row was not listed"
+  assert_contains "$section" "beta,queued,ship,fixture,Beta work,none,captain,wait" "the held row was not listed"
+  assert_contains "$section" 'delta,queued,ship,fixture,Delta,alpha,"-","-"' "the blocked row was not listed"
+  assert_contains "$section" "gamma,queued,scout,fixture,Gamma" "the ready row was not listed"
+  pass "a ready answer followed by a ready_public_followups table is still complete (simulated-compatible tasks-axi over real 0.2.5 and Beads)"
+}
+
+# A Markdown-default home with no data directory keeps the legacy ABSENT answer;
+# only an unreadable backend configuration is disclosed as unavailable.
+test_backlog_markdown_home_without_data_dir_keeps_absent_marker() {
+  local rec root home fakebin out section
+  rec=$(new_world backlog-markdown-no-data-dir)
+  IFS='|' read -r root home fakebin <<EOF
+$rec
+EOF
+  make_fake_toolchain "$fakebin"
+  make_fake_ps_claude "$fakebin"
+  mv "$home/data" "$TMP_ROOT/backlog-markdown-no-data-dir-moved"
+
+  out=$(run_session_start "$home" "$root" "$fakebin:$BASE_PATH")
+  section=$(backlog_section "$out")
+
+  assert_contains "$section" "ABSENT" "a Markdown home without a data directory lost its ABSENT marker"
+  assert_not_contains "$section" "Backlog unavailable" "a Markdown home without a data directory was disclosed as unavailable"
+  pass "a Markdown-default home without a data directory keeps the ABSENT marker"
 }
 
 # A group that fails, or exits 0 with output that is not a complete answer, must
@@ -3306,6 +3352,8 @@ test_backlog_configured_backend_without_a_shadow_file_is_not_absent
 test_backlog_configured_backend_reads_the_adapter_not_the_shadow_file
 test_backlog_configured_backend_valid_empty_queue_is_distinguishable
 test_backlog_configured_backend_incomplete_or_failed_group_is_unavailable
+test_backlog_configured_backend_ready_public_followups_table_is_not_incomplete
+test_backlog_markdown_home_without_data_dir_keeps_absent_marker
 test_backlog_unreadable_backend_configuration_is_unavailable
 test_fleet_digest_empty_fleet
 test_next_step_sources_x_mode_cadence

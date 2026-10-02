@@ -465,6 +465,7 @@ configured_backlog_complete() {  # <list|ready> <output>
       else { table = 1 }
       next
     }
+    table && !/^  / { table = 0 }
     table && /^  [^ -]/ { rows++; next }
     END { exit (bad || !second || (n > 0 && rows != n)) ? 1 : 0 }
   '
@@ -640,11 +641,11 @@ print_backlog_compact() {
     FM_BACKLOG_TRANSITION_ERROR=
     fm_backlog_tasks_axi_addressing "$DATA"
     addressing_status=$?
-    if [ "$addressing_status" -ne 0 ]; then
+    if [ "$addressing_status" -eq 2 ]; then
       subsection "configured backlog"
       print_backlog_unavailable "unresolved" "${FM_BACKLOG_TRANSITION_ERROR:-the backlog data directory cannot be resolved: $DATA}"
       return 0
-    elif [ -z "$FM_BACKLOG_AXI_FILE" ]; then
+    elif [ "$addressing_status" -eq 0 ] && [ -z "$FM_BACKLOG_AXI_FILE" ]; then
       backend=$(fm_tasks_axi_backend "$FM_BACKLOG_AXI_ROOT")
       subsection "configured backlog ($backend)"
       print_backlog_configured "$backend"
