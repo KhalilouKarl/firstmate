@@ -1,0 +1,15 @@
+ok - context digest distinguishes ABSENT, empty-but-present, and populated files
+ok - compatible tasks-axi backlog rendering drops done rows and keeps every in-flight, held, and blocked row
+ok - the startup backlog bound cuts only dispatchable queued rows and discloses the remainder exactly
+ok - manual backlog rendering drops done rows, keeps every held or blocked title line, and bounds the rest
+ok - unavailable or incompatible tasks-axi falls back to compact manual backlog rendering
+ok - an incompatible tasks-axi on a configured Beads home is disclosed as unavailable, never as a stale or empty queue
+ok - a configured Beads home with no data/backlog.md still lists its queue
+ok - a configured Beads home lists in-flight, held, blocked and ready rows from the adapter, ignoring the shadow file and an inherited TASKS_AXI_FILE
+ok - a valid empty configured queue shows the adapter's empty answer, distinct from unavailable
+ok - a failing or incomplete group makes the configured listing unavailable instead of empty or partial
+ok - a ready answer followed by a ready_public_followups table is still complete (simulated-compatible tasks-axi over real 0.2.5 and Beads)
+ok - a Markdown-default home without a data directory keeps the ABSENT marker
+ok - an unreadable backlog backend configuration is disclosed as unavailable, not as a stale queue
+# fm-session-start.test.sh: all assertions passed
+bash tests/zz-tmp-ss.test.sh  78.14s user 119.99s system 102% cpu 3:13.68 total

@@ -1,0 +1,8 @@
+not ok - a Markdown home without a data directory lost its ABSENT marker (missing: 'ABSENT')
+--- output ---
+================================================================================
+
+configured backlog
+--------------------------------------------------------------------------------
+Backlog unavailable (unresolved): the backlog data directory cannot be resolved: /home/ubuntu/si-loop-tmp/tmp/fm-session-start-tests.uXiGeo/backlog-markdown-no-data-dir/home/data
+The configured backend was not read, and data/backlog.md is not its queue, so no backlog rows are shown; this is not an empty queue.

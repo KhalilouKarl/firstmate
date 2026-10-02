@@ -1,0 +1,8 @@
+not ok - a following ready_public_followups table made a healthy ready group incomplete (unexpected: 'Backlog unavailable')
+--- output ---
+================================================================================
+
+configured backlog (beads)
+--------------------------------------------------------------------------------
+Backlog unavailable (beads): the ready answer is incomplete or malformed
+The configured backend was not read, and data/backlog.md is not its queue, so no backlog rows are shown; this is not an empty queue.
